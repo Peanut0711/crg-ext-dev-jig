@@ -62,6 +62,9 @@ INA226 ina226(INA226_I2C_ADDR);
 // 전류 모니터링 상태 변수
 bool currentMonitorActive = false;
 unsigned long lastCurrentPrintTime = 0;
+float peakCurrent = 0.0;  // 피크 전류값 저장
+unsigned long lastPeakResetTime = 0;  // 피크값 마지막 초기화 시간
+bool justReset = false;    // 피크값이 방금 초기화되었는지 표시
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -74,23 +77,48 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 void handleCurrentMonitor() {
   if (!currentMonitorActive) return;
   unsigned long now = millis();
-  if (now - lastCurrentPrintTime >= 1000) {
+  
+  // 3초마다 피크값 초기화
+  if (now - lastPeakResetTime >= 3000) {
+    peakCurrent = 0.0;
+    lastPeakResetTime = now;
+    justReset = true;  // 초기화 순간 표시
+  }
+  
+  if (now - lastCurrentPrintTime >= 500) {
     lastCurrentPrintTime = now;
     float current_mA = ina226.getCurrent_mA();
+    float current_A = current_mA / 1000.0;
+    
+    // 피크값 업데이트
+    if (current_A > peakCurrent) {
+      peakCurrent = current_A;
+      justReset = false;  // 새로운 피크값이 생기면 초기화 표시 해제
+    }
+    
     // 시리얼 출력
     Serial.print("[INA226] Current: ");
-    Serial.print(current_mA, 1);
-    Serial.println(" mA");
+    Serial.print(current_A, 1);
+    Serial.print(" A, Peak: ");
+    Serial.print(justReset ? "-.-" : String(peakCurrent, 1));
+    Serial.println(" A");
+    
     // OLED 출력
     display.clearDisplay();
     display.setTextSize(2);
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(0,0);
-    display.print("CUR: ");
-    // mA → A 변환 (소수점 1자리, 반올림)
-    float current_A = current_mA / 1000.0;
-    display.print(current_A, 1); // 소수점 1자리
-    display.println(" A");
+    display.print("CURR: ");
+    display.print(current_A, 1);
+    display.println("A");
+    display.setCursor(0,16);
+    display.print("PEAK:");
+    if (justReset) {
+      display.println("    ");  // 공백으로 표시
+    } else {
+      display.print(peakCurrent, 1);
+      display.println("A");
+    }
     display.display();
   }
 }
@@ -289,7 +317,7 @@ void handleDisconnectingState(unsigned long currentMillis) {
     display.setTextSize(2);
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(0,0);
-    display.println("DISCONNECTED");
+    display.println("DISCONNECT");
     display.display();
   }
 }
