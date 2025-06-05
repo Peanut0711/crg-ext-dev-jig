@@ -21,6 +21,7 @@
 // 타이밍 설정
 #define CMD_DELAY_1     100     // 명령 간 기본 지연 시간 (ms)
 #define CMD_DELAY_2     500     // 마사지 제어 전 지연 시간 (ms)
+#define LED_CHECK_TIME  5000    // LED 검사 시간 (5초)
 
 // 제품 연결 상태 판단을 위한 임계값 설정
 const float CONNECTED_THRESHOLD = 2.0;  // 2.0V 미만이면 제품 연결로 판단
@@ -252,41 +253,69 @@ void sendExtDevTestCommands() {
     Serial.println("   RMC ON 명령 전송 완료");
     delay(CMD_DELAY_1);
     
-    // 마사지 모드 설정
-    Serial.println("2. 마사지 모드 설정 중...");
-    if (sendCanMessage(RMC_ID, 6, 22, 1)) {
-      Serial.println("   마사지 모드 설정 완료");
+    // LED 검사 모드 설정 (마사지 모드 4)
+    Serial.println("2. LED 검사 모드 설정 중...");
+    if (sendCanMessage(RMC_ID, 6, 22, 4)) {
+      Serial.println("   LED 검사 모드 설정 완료");
       delay(CMD_DELAY_1);
       
-      // 온도 설정
-      Serial.println("3. 온도 설정 중...");
-      if (sendCanMessage(RMC_ID, 6, 28, 450)) {
-        Serial.println("   온도 설정 완료");
-        delay(CMD_DELAY_1);
+      // LED 검사 시작 (재생)
+      Serial.println("3. LED 검사 시작...");
+      if (sendCanMessage(RMC_ID, 6, 21, 1)) {
+        Serial.println("   LED 검사 시작 완료");
+        Serial.println("   LED 동작 확인 중... (5초)");
+        delay(LED_CHECK_TIME);
         
-        // 마사지 강도 설정
-        Serial.println("4. 마사지 강도 설정 중...");
-        if (sendCanMessage(RMC_ID, 6, 23, 3)) {
-          Serial.println("   마사지 강도 설정 완료");
-          delay(CMD_DELAY_2);
+        // LED 검사 일시정지
+        Serial.println("4. LED 검사 일시정지...");
+        if (sendCanMessage(RMC_ID, 6, 21, 2)) {
+          Serial.println("   LED 검사 일시정지 완료");
+          delay(CMD_DELAY_1);
           
-          // 마사지 제어 (재생)
-          Serial.println("5. 마사지 제어(재생) 명령 전송 중...");
-          if (sendCanMessage(RMC_ID, 6, 21, 1)) {
-            Serial.println("   마사지 제어 명령 전송 완료");
-            commandsSent = true;  // 모든 명령 전송 완료
-            Serial.println("=== 장비 제어 명령 전송 완료 ===\n");
+          // 진동 검사 모드 설정 (마사지 모드 1)
+          Serial.println("5. 진동 검사 모드 설정 중...");
+          if (sendCanMessage(RMC_ID, 6, 22, 1)) {
+            Serial.println("   진동 검사 모드 설정 완료");
+            delay(CMD_DELAY_1);
+            
+            // 온도 설정
+            Serial.println("6. 온도 설정 중...");
+            if (sendCanMessage(RMC_ID, 6, 28, 450)) {
+              Serial.println("   온도 설정 완료");
+              delay(CMD_DELAY_1);
+              
+              // 마사지 강도 설정
+              Serial.println("7. 마사지 강도 설정 중...");
+              if (sendCanMessage(RMC_ID, 6, 23, 3)) {
+                Serial.println("   마사지 강도 설정 완료");
+                delay(CMD_DELAY_2);
+                
+                // 진동 검사 시작 (재생)
+                Serial.println("8. 진동 검사 시작...");
+                if (sendCanMessage(RMC_ID, 6, 21, 1)) {
+                  Serial.println("   진동 검사 시작 완료");
+                  commandsSent = true;  // 모든 명령 전송 완료
+                  Serial.println("=== 장비 제어 명령 전송 완료 ===\n");
+                } else {
+                  Serial.println("   진동 검사 시작 실패");
+                }
+              } else {
+                Serial.println("   마사지 강도 설정 실패");
+              }
+            } else {
+              Serial.println("   온도 설정 실패");
+            }
           } else {
-            Serial.println("   마사지 제어 명령 전송 실패");
+            Serial.println("   진동 검사 모드 설정 실패");
           }
         } else {
-          Serial.println("   마사지 강도 설정 실패");
+          Serial.println("   LED 검사 일시정지 실패");
         }
       } else {
-        Serial.println("   온도 설정 실패");
+        Serial.println("   LED 검사 시작 실패");
       }
     } else {
-      Serial.println("   마사지 모드 설정 실패");
+      Serial.println("   LED 검사 모드 설정 실패");
     }
   } else {
     Serial.println("   RMC ON 명령 전송 실패");
