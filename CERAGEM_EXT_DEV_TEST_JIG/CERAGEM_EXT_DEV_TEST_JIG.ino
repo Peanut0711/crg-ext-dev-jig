@@ -3,6 +3,8 @@
 #include <ACAN_ESP32.h>
 #include <Wire.h>
 #include <INA226.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
 // 핀 정의
 #define ADC_PIN         36      // ADC1 핀
@@ -61,25 +63,35 @@ INA226 ina226(INA226_I2C_ADDR);
 bool currentMonitorActive = false;
 unsigned long lastCurrentPrintTime = 0;
 
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define OLED_ADDR     0x3C
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
 // 전류 모니터링 함수 (millis 기반, 함수화)
 void handleCurrentMonitor() {
   if (!currentMonitorActive) return;
   unsigned long now = millis();
   if (now - lastCurrentPrintTime >= 1000) {
     lastCurrentPrintTime = now;
-    float bus_mV = ina226.getBusVoltage_mV();
-    float shunt_mV = ina226.getShuntVoltage_mV();
     float current_mA = ina226.getCurrent_mA();
-    float power_mW = ina226.getPower_mW();
-    Serial.print("[INA226] Bus: ");
-    Serial.print(bus_mV, 2);
-    Serial.print(" mV, Shunt: ");
-    Serial.print(shunt_mV, 3);
-    Serial.print(" mV, Current: ");
-    Serial.print(current_mA, 3);
-    Serial.print(" mA, Power: ");
-    Serial.print(power_mW, 2);
-    Serial.println(" mW");
+    // 시리얼 출력
+    Serial.print("[INA226] Current: ");
+    Serial.print(current_mA, 1);
+    Serial.println(" mA");
+    // OLED 출력
+    display.clearDisplay();
+    display.setTextSize(2);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0,0);
+    display.print("CUR: ");
+    // mA → A 변환 (소수점 1자리, 반올림)
+    float current_A = current_mA / 1000.0;
+    display.print(current_A, 1); // 소수점 1자리
+    display.println(" A");
+    display.display();
   }
 }
 
@@ -272,6 +284,13 @@ void handleDisconnectingState(unsigned long currentMillis) {
     commandsSent = false;
     currentMonitorActive = false; // 장치 분리 시 전류 모니터링 중지
     Serial.println("CAN 통신 상태 및 전류 모니터링 초기화 완료");
+    
+    display.clearDisplay();
+    display.setTextSize(2);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0,0);
+    display.println("DISCONNECTED");
+    display.display();
   }
 }
 
@@ -385,6 +404,20 @@ void setup() {
   Serial.begin(115200);
   Wire.begin(21, 22); // ESP32: SDA=21, SCL=22
   delay(100); // 전원 안정화 대기
+
+  // OLED 초기화
+  if(!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println(F("SSD1315(OLED) 초기화 실패"));
+    for(;;); // 멈춤
+  }
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0,0);
+  display.println("CERAGEM");
+  display.display();
+  delay(1000);
+  display.clearDisplay();
 
   scanI2CDevices(); // I2C 스캐너 먼저 실행
 
