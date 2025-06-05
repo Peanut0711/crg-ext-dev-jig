@@ -112,7 +112,7 @@ void checkCANCommunication() {
   unsigned long currentMillis = millis();
   
   // 5V 릴레이가 ON이고, 500ms가 지난 후에만 CAN 통신 체크
-  if (rly5vState && (currentMillis - lastCanCheckTime >= 1000)) {
+  if (rly5vState && (currentMillis - lastCanCheckTime >= 500)) {
     lastCanCheckTime = currentMillis;
     
     CANMessage message;
@@ -123,6 +123,8 @@ void checkCANCommunication() {
         sendExtDevTestCommands();  // CAN 연결 확인 시 한 번만 명령 전송
       }
       
+      // CAN 수신 메시지 출력 비활성화
+      /*
       Serial.print("CAN 수신: ID=0x");
       Serial.print(message.id, HEX);
       Serial.print(", DLC=");
@@ -135,6 +137,7 @@ void checkCANCommunication() {
         Serial.print(" ");
       }
       Serial.println();
+      */
     }
   }
 }
