@@ -29,6 +29,7 @@ const unsigned long DEBOUNCE_DELAY = 500;  // 디바운싱 시간 (500ms)
 bool isConnected = false;  // 제품 연결 상태
 bool lastState = false;    // 이전 상태
 bool isCanConnected = false;  // CAN 통신 연결 상태
+bool commandsSent = false;    // CAN 명령 전송 완료 여부
 unsigned long lastDebounceTime = 0;  // 마지막 디바운싱 시간
 unsigned long lastCanCheckTime = 0;  // 마지막 CAN 체크 시간
 unsigned long lastCmdTime = 0;       // 마지막 명령 전송 시간
@@ -109,13 +110,18 @@ void initCAN() {
 void checkCANCommunication() {
   unsigned long currentMillis = millis();
   
-  // 1초마다 CAN 통신 상태 체크
-  if (currentMillis - lastCanCheckTime >= 1000) {
+  // 5V 릴레이가 ON이고, 500ms가 지난 후에만 CAN 통신 체크
+  if (rly5vState && (currentMillis - lastCanCheckTime >= 1000)) {
     lastCanCheckTime = currentMillis;
     
     CANMessage message;
     if (ACAN_ESP32::can.receive(message)) {
-      isCanConnected = true;  // CAN 메시지 수신 시 연결 상태로 설정
+      if (!isCanConnected) {  // CAN 연결이 처음 확인된 경우에만
+        isCanConnected = true;
+        Serial.println("CAN 통신 연결 확인 - 장비 제어 명령 전송 시작");
+        sendExtDevTestCommands();  // CAN 연결 확인 시 한 번만 명령 전송
+      }
+      
       Serial.print("CAN 수신: ID=0x");
       Serial.print(message.id, HEX);
       Serial.print(", DLC=");
@@ -208,6 +214,9 @@ void handleConnectedState(unsigned long currentMillis) {
     digitalWrite(RLY_5V_PIN, HIGH);
     rly5vState = true;
     Serial.println("5V 릴레이 ON");
+    // 5V 인가 후 500ms 대기 후 CAN 통신 시작
+    lastCanCheckTime = currentMillis + 500;
+    Serial.println("CAN 통신 대기 중... (500ms)");
   }
 }
 
@@ -223,55 +232,64 @@ void handleDisconnectingState(unsigned long currentMillis) {
     rly5vState = false;
     Serial.println("5V 릴레이 OFF");
     isDisconnecting = false;
+    
+    // CAN 관련 상태 초기화
+    isCanConnected = false;
+    commandsSent = false;
+    Serial.println("CAN 통신 상태 초기화 완료");
   }
 }
 
 // 장비 제어 명령 전송
 void sendExtDevTestCommands() {
-  unsigned long currentMillis = millis();
+  if (commandsSent) return;  // 이미 명령을 전송했다면 리턴
   
-  // CAN이 연결되어 있고, 마지막 명령 전송 후 충분한 시간이 지났을 때
-  if (isCanConnected && (currentMillis - lastCmdTime >= CMD_DELAY_1)) {
-    static uint8_t cmdStep = 0;
+  Serial.println("\n=== 장비 제어 명령 전송 시작 ===");
+  
+  // RMC ON 명령
+  Serial.println("1. RMC ON 명령 전송 중...");
+  if (sendCanMessage(RMC_ID, 0, 1, 2)) {
+    Serial.println("   RMC ON 명령 전송 완료");
+    delay(CMD_DELAY_1);
     
-    switch (cmdStep) {
-      case 0:  // RMC ON 명령
-        if (sendCanMessage(RMC_ID, 0, 1, 2)) {
-          cmdStep++;
-          lastCmdTime = currentMillis;
-        }
-        break;
+    // 마사지 모드 설정
+    Serial.println("2. 마사지 모드 설정 중...");
+    if (sendCanMessage(RMC_ID, 6, 22, 1)) {
+      Serial.println("   마사지 모드 설정 완료");
+      delay(CMD_DELAY_1);
+      
+      // 온도 설정
+      Serial.println("3. 온도 설정 중...");
+      if (sendCanMessage(RMC_ID, 6, 28, 450)) {
+        Serial.println("   온도 설정 완료");
+        delay(CMD_DELAY_1);
         
-      case 1:  // 마사지 모드 설정
-        if (sendCanMessage(RMC_ID, 6, 22, 1)) {
-          cmdStep++;
-          lastCmdTime = currentMillis;
-        }
-        break;
-        
-      case 2:  // 온도 설정
-        if (sendCanMessage(RMC_ID, 6, 28, 450)) {
-          cmdStep++;
-          lastCmdTime = currentMillis;
-        }
-        break;
-        
-      case 3:  // 마사지 강도 설정
+        // 마사지 강도 설정
+        Serial.println("4. 마사지 강도 설정 중...");
         if (sendCanMessage(RMC_ID, 6, 23, 3)) {
-          cmdStep++;
-          lastCmdTime = currentMillis;
-        }
-        break;
-        
-      case 4:  // 마사지 제어 (재생)
-        if (currentMillis - lastCmdTime >= CMD_DELAY_2) {
+          Serial.println("   마사지 강도 설정 완료");
+          delay(CMD_DELAY_2);
+          
+          // 마사지 제어 (재생)
+          Serial.println("5. 마사지 제어(재생) 명령 전송 중...");
           if (sendCanMessage(RMC_ID, 6, 21, 1)) {
-            cmdStep++;
-            lastCmdTime = currentMillis;
+            Serial.println("   마사지 제어 명령 전송 완료");
+            commandsSent = true;  // 모든 명령 전송 완료
+            Serial.println("=== 장비 제어 명령 전송 완료 ===\n");
+          } else {
+            Serial.println("   마사지 제어 명령 전송 실패");
           }
+        } else {
+          Serial.println("   마사지 강도 설정 실패");
         }
-        break;
+      } else {
+        Serial.println("   온도 설정 실패");
+      }
+    } else {
+      Serial.println("   마사지 모드 설정 실패");
     }
+  } else {
+    Serial.println("   RMC ON 명령 전송 실패");
   }
 }
 
@@ -297,9 +315,8 @@ void loop() {
   checkConnectionStatus();    // 연결 상태 확인
   handleRelayControl();      // 릴레이 제어
   
-  // 연결된 상태일 때만 CAN 통신 모니터링 및 명령 전송
+  // 연결된 상태일 때만 CAN 통신 모니터링
   if (isConnected && !isDisconnecting) {
     checkCANCommunication();
-    sendExtDevTestCommands();
   }
 }
