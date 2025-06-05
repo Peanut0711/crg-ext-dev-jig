@@ -1,6 +1,8 @@
 // CERAGEM_EXT_DEV_TEST_JIG_FW
 
 #include <ACAN_ESP32.h>
+#include <Wire.h>
+#include <INA226.h>
 
 // 핀 정의
 #define ADC_PIN         36      // ADC1 핀
@@ -51,6 +53,35 @@ struct CanMessage {
   uint16_t number;  // Data ID
   uint32_t data;    // 전송할 데이터
 };
+
+#define INA226_I2C_ADDR 0x40  // 기본 주소 (하드웨어에 따라 다를 수 있음)
+INA226 ina226(INA226_I2C_ADDR);
+
+// 전류 모니터링 상태 변수
+bool currentMonitorActive = false;
+unsigned long lastCurrentPrintTime = 0;
+
+// 전류 모니터링 함수 (millis 기반, 함수화)
+void handleCurrentMonitor() {
+  if (!currentMonitorActive) return;
+  unsigned long now = millis();
+  if (now - lastCurrentPrintTime >= 1000) {
+    lastCurrentPrintTime = now;
+    float bus_mV = ina226.getBusVoltage_mV();
+    float shunt_mV = ina226.getShuntVoltage_mV();
+    float current_mA = ina226.getCurrent_mA();
+    float power_mW = ina226.getPower_mW();
+    Serial.print("[INA226] Bus: ");
+    Serial.print(bus_mV, 2);
+    Serial.print(" mV, Shunt: ");
+    Serial.print(shunt_mV, 3);
+    Serial.print(" mV, Current: ");
+    Serial.print(current_mA, 3);
+    Serial.print(" mA, Power: ");
+    Serial.print(power_mW, 2);
+    Serial.println(" mW");
+  }
+}
 
 // CAN 메시지 전송 함수
 bool sendCanMessage(uint32_t id, uint8_t bank, uint16_t number, uint32_t data) {
@@ -236,17 +267,17 @@ void handleDisconnectingState(unsigned long currentMillis) {
     rly5vState = false;
     Serial.println("5V 릴레이 OFF");
     isDisconnecting = false;
-    
     // CAN 관련 상태 초기화
     isCanConnected = false;
     commandsSent = false;
-    Serial.println("CAN 통신 상태 초기화 완료");
+    currentMonitorActive = false; // 장치 분리 시 전류 모니터링 중지
+    Serial.println("CAN 통신 상태 및 전류 모니터링 초기화 완료");
   }
 }
 
 // 장비 제어 명령 전송
 void sendExtDevTestCommands() {
-  if (commandsSent) return;  // 이미 명령을 전송했다면 리턴
+  if (commandsSent) return;
   
   Serial.println("\n=== 장비 제어 명령 전송 시작 ===");
   
@@ -297,7 +328,10 @@ void sendExtDevTestCommands() {
                 Serial.println("8. 진동 검사 시작...");
                 if (sendCanMessage(RMC_ID, 6, 21, 1)) {
                   Serial.println("   진동 검사 시작 완료");
-                  commandsSent = true;  // 모든 명령 전송 완료
+                  commandsSent = true;
+                  currentMonitorActive = true; // 전류 모니터링 시작
+                  lastCurrentPrintTime = millis();
+                  Serial.println("전류 모니터링 시작");
                   Serial.println("=== 장비 제어 명령 전송 완료 ===\n");
                 } else {
                   Serial.println("   진동 검사 시작 실패");
@@ -325,10 +359,35 @@ void sendExtDevTestCommands() {
   }
 }
 
+void scanI2CDevices() {
+  Serial.println("\n[I2C SCAN] 시작");
+  byte count = 0;
+  for (byte address = 1; address < 127; ++address) {
+    Wire.beginTransmission(address);
+    if (Wire.endTransmission() == 0) {
+      Serial.print("I2C 디바이스 발견: 0x");
+      if (address < 16) Serial.print("0");
+      Serial.print(address, HEX);
+      Serial.println();
+      count++;
+    }
+  }
+  if (count == 0) {
+    Serial.println("I2C 디바이스를 찾을 수 없습니다.");
+  } else {
+    Serial.print("총 발견된 I2C 디바이스 수: ");
+    Serial.println(count);
+  }
+  Serial.println("[I2C SCAN] 종료\n");
+}
+
 void setup() {
-  // 시리얼 통신 초기화 (115200 baud rate)
   Serial.begin(115200);
-  
+  Wire.begin(21, 22); // ESP32: SDA=21, SCL=22
+  delay(100); // 전원 안정화 대기
+
+  scanI2CDevices(); // I2C 스캐너 먼저 실행
+
   // 핀 모드 설정
   pinMode(ADC_PIN, INPUT);
   pinMode(RLY_5V_PIN, OUTPUT);
@@ -341,14 +400,29 @@ void setup() {
   
   // CAN 통신 초기화
   initCAN();
+  if (ina226.begin()) {
+    Serial.println("INA226 초기화 성공");
+    int err = ina226.setMaxCurrentShunt(2.0, 0.005); // 최대전류 2.0A, 션트저항 0.005옴
+    if (err == INA226_ERR_NONE) {
+      Serial.println("INA226 캘리브레이션 성공");
+    } else {
+      Serial.print("INA226 캘리브레이션 실패, 에러코드: ");
+      Serial.println(err, HEX);
+    }
+  } else {
+    Serial.println("INA226 초기화 실패");
+    Serial.print("Manufacturer ID: 0x");
+    Serial.println(ina226.getManufacturerID(), HEX);
+    Serial.print("Die ID: 0x");
+    Serial.println(ina226.getDieID(), HEX);
+  }
 }
 
 void loop() {
   checkConnectionStatus();    // 연결 상태 확인
   handleRelayControl();      // 릴레이 제어
-  
-  // 연결된 상태일 때만 CAN 통신 모니터링
   if (isConnected && !isDisconnecting) {
     checkCANCommunication();
   }
+  handleCurrentMonitor(); // 전류 모니터링 주기적 호출
 }
