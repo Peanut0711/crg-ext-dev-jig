@@ -12,6 +12,15 @@
 
 // CAN 통신 설정
 #define CAN_SPEED       500000  // CAN 통신 속도 (500kbps)
+#define CAN_RETRY_COUNT 3       // CAN 메시지 재전송 횟수
+#define CAN_RETRY_DELAY 100     // 재전송 간격 (ms)
+
+// CAN ID 정의
+#define RMC_ID          0x01    // RMC CAN ID
+
+// 타이밍 설정
+#define CMD_DELAY_1     100     // 명령 간 기본 지연 시간 (ms)
+#define CMD_DELAY_2     500     // 마사지 제어 전 지연 시간 (ms)
 
 // 제품 연결 상태 판단을 위한 임계값 설정
 const float CONNECTED_THRESHOLD = 2.0;  // 2.0V 미만이면 제품 연결로 판단
@@ -19,8 +28,10 @@ const unsigned long DEBOUNCE_DELAY = 500;  // 디바운싱 시간 (500ms)
 
 bool isConnected = false;  // 제품 연결 상태
 bool lastState = false;    // 이전 상태
+bool isCanConnected = false;  // CAN 통신 연결 상태
 unsigned long lastDebounceTime = 0;  // 마지막 디바운싱 시간
 unsigned long lastCanCheckTime = 0;  // 마지막 CAN 체크 시간
+unsigned long lastCmdTime = 0;       // 마지막 명령 전송 시간
 
 // 타이밍 관련 변수
 unsigned long previousMillis = 0;    // 마지막 상태 변경 시간
@@ -29,6 +40,54 @@ unsigned long rly24vDelay = 0;       // 24V 릴레이 제어 지연 시간
 bool rly5vState = false;             // 5V 릴레이 상태
 bool rly24vState = false;            // 24V 릴레이 상태
 bool isDisconnecting = false;        // 연결 해제 진행 중 여부
+
+// CAN 메시지 구조체 정의
+struct CanMessage {
+  uint32_t id;      // CAN ID
+  uint8_t bank;     // Bank 번호
+  uint8_t type;     // 메시지 타입 (2로 고정)
+  uint16_t number;  // Data ID
+  uint32_t data;    // 전송할 데이터
+};
+
+// CAN 메시지 전송 함수
+bool sendCanMessage(uint32_t id, uint8_t bank, uint16_t number, uint32_t data) {
+  CANMessage message;
+  message.id = id;
+  message.len = 8;  // 고정 길이 8바이트
+  
+  // 데이터 패킹 (Big Endian)
+  message.data[0] = bank;           // Bank 번호
+  message.data[1] = 2;              // 고정값
+  message.data[2] = (number >> 8);  // Data ID (상위 바이트)
+  message.data[3] = (number & 0xFF);// Data ID (하위 바이트)
+  message.data[4] = (data >> 24);   // Data (최상위 바이트)
+  message.data[5] = (data >> 16);   // Data
+  message.data[6] = (data >> 8);    // Data
+  message.data[7] = (data & 0xFF);  // Data (최하위 바이트)
+  
+  // 재전송 로직
+  for (int retry = 0; retry < CAN_RETRY_COUNT; retry++) {
+    if (ACAN_ESP32::can.tryToSend(message)) {
+      Serial.print("CAN 송신 성공 (시도 ");
+      Serial.print(retry + 1);
+      Serial.print("/");
+      Serial.print(CAN_RETRY_COUNT);
+      Serial.println(")");
+      return true;
+    }
+    
+    Serial.print("CAN 송신 실패 (시도 ");
+    Serial.print(retry + 1);
+    Serial.print("/");
+    Serial.print(CAN_RETRY_COUNT);
+    Serial.println(")");
+    
+    delay(CAN_RETRY_DELAY);
+  }
+  
+  return false;
+}
 
 // CAN 통신 초기화
 void initCAN() {
@@ -56,6 +115,7 @@ void checkCANCommunication() {
     
     CANMessage message;
     if (ACAN_ESP32::can.receive(message)) {
+      isCanConnected = true;  // CAN 메시지 수신 시 연결 상태로 설정
       Serial.print("CAN 수신: ID=0x");
       Serial.print(message.id, HEX);
       Serial.print(", DLC=");
@@ -166,6 +226,55 @@ void handleDisconnectingState(unsigned long currentMillis) {
   }
 }
 
+// 장비 제어 명령 전송
+void sendExtDevTestCommands() {
+  unsigned long currentMillis = millis();
+  
+  // CAN이 연결되어 있고, 마지막 명령 전송 후 충분한 시간이 지났을 때
+  if (isCanConnected && (currentMillis - lastCmdTime >= CMD_DELAY_1)) {
+    static uint8_t cmdStep = 0;
+    
+    switch (cmdStep) {
+      case 0:  // RMC ON 명령
+        if (sendCanMessage(RMC_ID, 0, 1, 2)) {
+          cmdStep++;
+          lastCmdTime = currentMillis;
+        }
+        break;
+        
+      case 1:  // 마사지 모드 설정
+        if (sendCanMessage(RMC_ID, 6, 22, 1)) {
+          cmdStep++;
+          lastCmdTime = currentMillis;
+        }
+        break;
+        
+      case 2:  // 온도 설정
+        if (sendCanMessage(RMC_ID, 6, 28, 450)) {
+          cmdStep++;
+          lastCmdTime = currentMillis;
+        }
+        break;
+        
+      case 3:  // 마사지 강도 설정
+        if (sendCanMessage(RMC_ID, 6, 23, 3)) {
+          cmdStep++;
+          lastCmdTime = currentMillis;
+        }
+        break;
+        
+      case 4:  // 마사지 제어 (재생)
+        if (currentMillis - lastCmdTime >= CMD_DELAY_2) {
+          if (sendCanMessage(RMC_ID, 6, 21, 1)) {
+            cmdStep++;
+            lastCmdTime = currentMillis;
+          }
+        }
+        break;
+    }
+  }
+}
+
 void setup() {
   // 시리얼 통신 초기화 (115200 baud rate)
   Serial.begin(115200);
@@ -188,8 +297,9 @@ void loop() {
   checkConnectionStatus();    // 연결 상태 확인
   handleRelayControl();      // 릴레이 제어
   
-  // 연결된 상태일 때만 CAN 통신 모니터링
+  // 연결된 상태일 때만 CAN 통신 모니터링 및 명령 전송
   if (isConnected && !isDisconnecting) {
     checkCANCommunication();
+    sendExtDevTestCommands();
   }
 }
