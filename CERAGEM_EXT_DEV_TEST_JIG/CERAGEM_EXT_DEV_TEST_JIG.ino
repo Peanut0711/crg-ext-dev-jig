@@ -1,101 +1,137 @@
 // CERAGEM_EXT_DEV_TEST_JIG_FW
 
 // 핀 정의
-const int adcPin = 36;      // ADC1 핀
-const int io17Pin = 17;     // 제어 핀 1
-const int io18Pin = 18;     // 제어 핀 2
-const int io34Pin = 34;     // 모니터링 핀
+#define ADC_PIN          36      // ADC1 핀
+#define RLY_5V_PIN      16      // 5V 릴레이 제어 핀
+#define RLY_24V_PIN     17      // 24V 릴레이 제어 핀
+#define SW_STOP_PIN     34      // 스톱 스위치 모니터링 핀
 
 // 제품 연결 상태 판단을 위한 임계값 설정
 const float CONNECTED_THRESHOLD = 2.0;  // 2.0V 미만이면 제품 연결로 판단
+const unsigned long DEBOUNCE_DELAY = 500;  // 디바운싱 시간 (500ms)
+
 bool isConnected = false;  // 제품 연결 상태
 bool lastState = false;    // 이전 상태
+unsigned long lastDebounceTime = 0;  // 마지막 디바운싱 시간
 
 // 타이밍 관련 변수
 unsigned long previousMillis = 0;    // 마지막 상태 변경 시간
-unsigned long io17Delay = 0;         // IO17 제어 지연 시간
-unsigned long io18Delay = 0;         // IO18 제어 지연 시간
-bool io17State = false;              // IO17 상태
-bool io18State = false;              // IO18 상태
+unsigned long rly5vDelay = 0;        // 5V 릴레이 제어 지연 시간
+unsigned long rly24vDelay = 0;       // 24V 릴레이 제어 지연 시간
+bool rly5vState = false;             // 5V 릴레이 상태
+bool rly24vState = false;            // 24V 릴레이 상태
 bool isDisconnecting = false;        // 연결 해제 진행 중 여부
+
+// 전압 측정 및 연결 상태 확인
+void checkConnectionStatus() {
+  int adcValue = analogRead(ADC_PIN);
+  float voltage = (adcValue * 3.3) / 4095.0;
+  bool swStopState = (digitalRead(SW_STOP_PIN) == LOW);
+  
+  // 현재 연결 상태 확인
+  bool currentConnectionState = (voltage < CONNECTED_THRESHOLD);
+  unsigned long currentMillis = millis();
+  
+  // 디바운싱 처리
+  if (currentConnectionState != lastState) {
+    lastDebounceTime = currentMillis;
+  }
+  
+  // 디바운싱 시간이 지났고, 상태가 변경되었을 때만 처리
+  if ((currentMillis - lastDebounceTime) > DEBOUNCE_DELAY) {
+    if (currentConnectionState != isConnected) {
+      isConnected = currentConnectionState;
+      handleStateChange(voltage, swStopState);
+    }
+  }
+  
+  lastState = currentConnectionState;
+}
+
+// 상태 변경 처리
+void handleStateChange(float voltage, bool swStopState) {
+  unsigned long currentMillis = millis();
+  
+  if (!isConnected || swStopState) {
+    // 연결 해제 또는 스톱 스위치 감지
+    if (!isDisconnecting) {
+      isDisconnecting = true;
+      previousMillis = currentMillis;
+      rly24vDelay = currentMillis + 500;  // 24V 릴레이 먼저 LOW
+      rly5vDelay = currentMillis + 1000;  // 0.5초 후 5V 릴레이 LOW
+    }
+  } else {
+    // 연결 감지
+    isDisconnecting = false;
+    previousMillis = currentMillis;
+    rly24vDelay = currentMillis + 500;    // 24V 릴레이 먼저 HIGH
+    rly5vDelay = currentMillis + 1000;    // 0.5초 후 5V 릴레이 HIGH
+  }
+  
+  // 상태 변경 메시지 출력
+  Serial.print("상태 변경: ");
+  Serial.print(isConnected ? "연결 됨" : "연결 해제");
+  Serial.print(" (전압: ");
+  Serial.print(voltage);
+  Serial.println("V)");
+}
+
+// 릴레이 제어 처리
+void handleRelayControl() {
+  unsigned long currentMillis = millis();
+  
+  if (isConnected && !isDisconnecting) {
+    handleConnectedState(currentMillis);
+  } else if (isDisconnecting) {
+    handleDisconnectingState(currentMillis);
+  }
+}
+
+// 연결 상태일 때 릴레이 제어
+void handleConnectedState(unsigned long currentMillis) {
+  if (currentMillis >= rly24vDelay && !rly24vState) {
+    digitalWrite(RLY_24V_PIN, HIGH);
+    rly24vState = true;
+    Serial.println("24V 릴레이 ON");
+  }
+  if (currentMillis >= rly5vDelay && !rly5vState) {
+    digitalWrite(RLY_5V_PIN, HIGH);
+    rly5vState = true;
+    Serial.println("5V 릴레이 ON");
+  }
+}
+
+// 연결 해제 중일 때 릴레이 제어
+void handleDisconnectingState(unsigned long currentMillis) {
+  if (currentMillis >= rly24vDelay && rly24vState) {
+    digitalWrite(RLY_24V_PIN, LOW);
+    rly24vState = false;
+    Serial.println("24V 릴레이 OFF");
+  }
+  if (currentMillis >= rly5vDelay && rly5vState) {
+    digitalWrite(RLY_5V_PIN, LOW);
+    rly5vState = false;
+    Serial.println("5V 릴레이 OFF");
+    isDisconnecting = false;
+  }
+}
 
 void setup() {
   // 시리얼 통신 초기화 (115200 baud rate)
   Serial.begin(115200);
   
   // 핀 모드 설정
-  pinMode(adcPin, INPUT);
-  pinMode(io17Pin, OUTPUT);
-  pinMode(io18Pin, OUTPUT);
-  pinMode(io34Pin, INPUT);
+  pinMode(ADC_PIN, INPUT);
+  pinMode(RLY_5V_PIN, OUTPUT);
+  pinMode(RLY_24V_PIN, OUTPUT);
+  pinMode(SW_STOP_PIN, INPUT);
   
   // 초기 상태 설정
-  digitalWrite(io17Pin, LOW);
-  digitalWrite(io18Pin, LOW);
+  digitalWrite(RLY_5V_PIN, LOW);
+  digitalWrite(RLY_24V_PIN, LOW);
 }
 
 void loop() {
-  unsigned long currentMillis = millis();
-  
-  // ADC 값 읽기
-  int adcValue = analogRead(adcPin);
-  float voltage = (adcValue * 3.3) / 4095.0;
-  
-  // IO34 상태 확인
-  bool io34State = (digitalRead(io34Pin) == LOW);
-  
-  // 제품 연결 상태 확인
-  isConnected = (voltage < CONNECTED_THRESHOLD);
-  
-  // 상태 변경 감지
-  if (isConnected != lastState || io34State) {
-    if (!isConnected || io34State) {
-      // 연결 해제 또는 IO34 LOW 감지
-      if (!isDisconnecting) {
-        isDisconnecting = true;
-        previousMillis = currentMillis;
-        io18Delay = currentMillis + 500;  // IO18 먼저 LOW
-        io17Delay = currentMillis + 1000; // 0.5초 후 IO17 LOW
-      }
-    } else {
-      // 연결 감지
-      isDisconnecting = false;
-      previousMillis = currentMillis;
-      io17Delay = currentMillis + 500;    // IO17 HIGH
-      io18Delay = currentMillis + 1000;   // 0.5초 후 IO18 HIGH
-    }
-    
-    // 상태 변경 메시지 출력
-    Serial.print("상태 변경: ");
-    Serial.print(isConnected ? "연결 됨" : "연결 해제");
-    Serial.print(" (전압: ");
-    Serial.print(voltage);
-    Serial.println("V)");
-    
-    lastState = isConnected;
-  }
-  
-  // IO 제어 타이밍 처리
-  if (isConnected && !isDisconnecting) {
-    // 연결 상태일 때
-    if (currentMillis >= io17Delay && !io17State) {
-      digitalWrite(io17Pin, HIGH);
-      io17State = true;
-    }
-    if (currentMillis >= io18Delay && !io18State) {
-      digitalWrite(io18Pin, HIGH);
-      io18State = true;
-    }
-  } else if (isDisconnecting) {
-    // 연결 해제 중일 때
-    if (currentMillis >= io18Delay && io18State) {
-      digitalWrite(io18Pin, LOW);
-      io18State = false;
-    }
-    if (currentMillis >= io17Delay && io17State) {
-      digitalWrite(io17Pin, LOW);
-      io17State = false;
-      isDisconnecting = false;
-    }
-  }
+  checkConnectionStatus();    // 연결 상태 확인
+  handleRelayControl();      // 릴레이 제어
 }
