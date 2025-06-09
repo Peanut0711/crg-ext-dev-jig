@@ -25,7 +25,9 @@
 // 타이밍 설정
 #define CMD_DELAY_1     100     // 명령 간 기본 지연 시간 (ms)
 #define CMD_DELAY_2     500     // 마사지 제어 전 지연 시간 (ms)
-#define LED_CHECK_TIME  5000    // LED 검사 시간 (5초)
+#define LED_CHECK_TIME  3000    // LED 검사 시간 (3초)
+#define PEAK_RESET_TIME 2000    // 피크값 초기화 시간 (2초)
+#define CURRENT_PRINT_TIME 300  // 전류 출력 주기 (300ms)
 
 // 제품 연결 상태 판단을 위한 임계값 설정
 const float CONNECTED_THRESHOLD = 2.0;  // 2.0V 미만이면 제품 연결로 판단
@@ -46,6 +48,11 @@ unsigned long rly24vDelay = 0;       // 24V 릴레이 제어 지연 시간
 bool rly5vState = false;             // 5V 릴레이 상태
 bool rly24vState = false;            // 24V 릴레이 상태
 bool isDisconnecting = false;        // 연결 해제 진행 중 여부
+
+// EMA 관련 변수 추가
+float emaCurrent = 0.0;    // EMA 처리된 전류값
+const float alpha = 0.1;   // EMA 알파 값
+bool isFirstEma = true;    // 최초 EMA 계산 여부
 
 // CAN 메시지 구조체 정의
 struct CanMessage {
@@ -79,16 +86,24 @@ void handleCurrentMonitor() {
   unsigned long now = millis();
   
   // 3초마다 피크값 초기화
-  if (now - lastPeakResetTime >= 3000) {
+  if (now - lastPeakResetTime >= PEAK_RESET_TIME) {
     peakCurrent = 0.0;
     lastPeakResetTime = now;
     justReset = true;  // 초기화 순간 표시
   }
   
-  if (now - lastCurrentPrintTime >= 500) {
+  if (now - lastCurrentPrintTime >= CURRENT_PRINT_TIME) {
     lastCurrentPrintTime = now;
     float current_mA = ina226.getCurrent_mA();
     float current_A = current_mA / 1000.0;
+    
+    // EMA 계산
+    if (isFirstEma) {
+      emaCurrent = current_A;  // 최초 실행시 현재값으로 초기화
+      isFirstEma = false;
+    } else {
+      emaCurrent = alpha * current_A + (1 - alpha) * emaCurrent;  // EMA 계산
+    }
     
     // 피크값 업데이트
     if (current_A > peakCurrent) {
@@ -97,9 +112,11 @@ void handleCurrentMonitor() {
     }
     
     // 시리얼 출력
-    Serial.print("[INA226] Current: ");
-    Serial.print(current_A, 1);
-    Serial.print(" A, Peak: ");
+    Serial.print("[INA226] Instant Current: ");
+    Serial.print(current_A, 2);
+    Serial.print(" A    |    EMA Current: ");
+    Serial.print(emaCurrent, 2);
+    Serial.print(" A    |    Peak: ");
     Serial.print(justReset ? "-.-" : String(peakCurrent, 1));
     Serial.println(" A");
     
@@ -107,12 +124,14 @@ void handleCurrentMonitor() {
     display.clearDisplay();
     display.setTextSize(2);
     display.setTextColor(SSD1306_WHITE);
-    display.setCursor(0,0);
-    display.print("CURR: ");
-    display.print(current_A, 1);
-    display.println("A");
+
     display.setCursor(0,16);
-    display.print("PEAK:");
+    display.print("CURR: ");
+    display.print(emaCurrent, 1);
+    display.println("A");
+
+    display.setCursor(0,32);
+    display.print("PEAK: ");
     if (justReset) {
       display.println("    ");  // 공백으로 표시
     } else {
@@ -316,7 +335,7 @@ void handleDisconnectingState(unsigned long currentMillis) {
     display.clearDisplay();
     display.setTextSize(2);
     display.setTextColor(SSD1306_WHITE);
-    display.setCursor(0,0);
+    display.setCursor(8,24);
     display.println("DISCONNECT");
     display.display();
   }
@@ -344,7 +363,7 @@ void sendExtDevTestCommands() {
       Serial.println("3. LED 검사 시작...");
       if (sendCanMessage(RMC_ID, 6, 21, 1)) {
         Serial.println("   LED 검사 시작 완료");
-        Serial.println("   LED 동작 확인 중... (5초)");
+        Serial.println("   LED 동작 확인 중... (3초)");
         delay(LED_CHECK_TIME);
         
         // LED 검사 일시정지
@@ -441,7 +460,7 @@ void setup() {
   display.clearDisplay();
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0,0);
+  display.setCursor(24,24);
   display.println("CERAGEM");
   display.display();
   delay(1000);
