@@ -325,13 +325,6 @@ void handleConnectedState(unsigned long currentMillis) {
     digitalWrite(RLY_24V_PIN, HIGH);
     rly24vState = true;
     Serial.println("24V 릴레이 ON");
-
-    // display.clearDisplay();
-    // display.setTextSize(2);
-    // display.setTextColor(SSD1306_WHITE);
-    // display.setCursor(22,24);
-    // display.println("CONNECT");
-    // display.display();
   }
   if (currentMillis >= rly5vDelay && !rly5vState) {
     digitalWrite(RLY_5V_PIN, HIGH);
@@ -359,14 +352,7 @@ void handleDisconnectingState(unsigned long currentMillis) {
     isCanConnected = false;
     commandsSent = false;
     currentMonitorActive = false; // 장치 분리 시 전류 모니터링 중지
-    Serial.println("CAN 통신 상태 및 전류 모니터링 초기화 완료");
-    
-    // display.clearDisplay();
-    // display.setTextSize(2);
-    // display.setTextColor(SSD1306_WHITE);
-    // display.setCursor(0,24);
-    // display.println("DISCONNECT");
-    // display.display();
+    Serial.println("CAN 통신 상태 및 전류 모니터링 초기화 완료");    
   }
 }
 
@@ -511,7 +497,7 @@ void setup() {
   initCAN();
   if (ina226.begin()) {
     Serial.println("INA226 초기화 성공");
-    int err = ina226.setMaxCurrentShunt(2.0, 0.005); // 최대전류 2.0A, 션트저항 0.005옴
+    int err = ina226.setMaxCurrentShunt(3.0, 0.005); // 최대전류 3.0A, 션트저항 0.005옴
     if (err == INA226_ERR_NONE) {
       Serial.println("INA226 캘리브레이션 성공");
     } else {
