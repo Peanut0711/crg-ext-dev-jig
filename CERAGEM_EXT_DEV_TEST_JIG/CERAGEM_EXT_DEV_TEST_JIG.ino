@@ -98,6 +98,18 @@ unsigned long lastDisplayUpdate = 0;
 const unsigned long DISPLAY_UPDATE_INTERVAL = 100; // 100ms
 bool stateChanged = false;
 
+// 스위치 입력 관련 설정
+#define SWITCH_SCAN_INTERVAL 20    // 스위치 스캔 주기 (20ms)
+#define SWITCH_DEBOUNCE_COUNT 10    // 디바운스 카운트 (10회)
+
+// 스위치 상태 관련 변수
+bool lastSwitchState = HIGH;       // 이전 스위치 상태
+bool currentSwitchState = HIGH;    // 현재 스위치 상태
+int switchStateCount = 0;          // 상태 카운트
+unsigned long lastSwitchScanTime = 0;  // 마지막 스캔 시간
+bool isSwitchPressed = false;      // 스위치 눌림 상태
+bool forceStopActivated = false;   // 강제 중지 활성화 여부
+
 // OLED 상태 표시 함수 (상태만 표시)
 void updateDisplayState() {
   if (!stateChanged) return;
@@ -315,6 +327,13 @@ void checkConnectionStatus() {
   if ((currentMillis - lastDebounceTime) > DEBOUNCE_DELAY) {
     if (currentConnectionState != isConnected) {
       isConnected = currentConnectionState;
+      
+      // 강제 중지 후 재연결 시 처리
+      if (isConnected && forceStopActivated) {
+        Serial.println("강제 중지 후 재연결됨 - 검사 재시작 가능");
+        forceStopActivated = false;  // 강제 중지 상태 해제
+      }
+      
       handleStateChange(voltage, swStopState);
     }
   }
@@ -340,6 +359,12 @@ void handleStateChange(float voltage, bool swStopState) {
     }
   } else {
     // 연결 감지
+    // 강제 중지 상태일 때는 연결을 무시
+    if (forceStopActivated) {
+      Serial.println("강제 중지 상태입니다. 장치를 분리했다가 다시 연결해주세요.");
+      return;
+    }
+    
     isDisconnecting = false;
     previousMillis = currentMillis;
     rly24vDelay = currentMillis + 500;    // 24V 릴레이 먼저 HIGH
@@ -359,6 +384,11 @@ void handleStateChange(float voltage, bool swStopState) {
 
 // 릴레이 제어 처리
 void handleRelayControl() {
+  // 강제 중지 상태일 때는 릴레이 제어를 하지 않음
+  if (forceStopActivated) {
+    return;
+  }
+
   unsigned long currentMillis = millis();
   
   if (isConnected && !isDisconnecting) {
@@ -512,6 +542,70 @@ void scanI2CDevices() {
   Serial.println("[I2C SCAN] 종료\n");
 }
 
+// 스위치 입력 감지 함수
+void checkSwitchInput() {
+  unsigned long currentMillis = millis();
+  
+  // 스캔 주기 확인
+  if (currentMillis - lastSwitchScanTime >= SWITCH_SCAN_INTERVAL) {
+    lastSwitchScanTime = currentMillis;
+    
+    // 현재 스위치 상태 읽기
+    currentSwitchState = digitalRead(SW_STOP_PIN);
+    
+    // 상태가 변경되었는지 확인
+    if (currentSwitchState != lastSwitchState) {
+      switchStateCount = 1;  // 카운트 초기화
+    } else {
+      switchStateCount++;    // 카운트 증가
+    }
+    
+    // 디바운스 카운트 확인
+    if (switchStateCount >= SWITCH_DEBOUNCE_COUNT) {
+      if (currentSwitchState != isSwitchPressed) {
+        isSwitchPressed = currentSwitchState;
+        
+        // 스위치 상태 변경 시 처리
+        if (isSwitchPressed) {
+          Serial.println("스위치 해제됨");
+        } else {
+          Serial.println("스위치 눌림 감지!");
+          
+          // 검사 중일 때만 처리
+          if (currentState != READY) {
+            Serial.println("검사 강제 중지!");          
+                
+            // 릴레이 즉시 차단
+            digitalWrite(RLY_24V_PIN, LOW);
+            digitalWrite(RLY_5V_PIN, LOW);
+            rly24vState = false;
+            rly5vState = false;
+            Serial.println("24V 릴레이 OFF");
+            Serial.println("5V 릴레이 OFF");
+            
+            // 상태 초기화
+            currentState = READY;
+            stateChanged = true;
+            isCanConnected = false;
+            commandsSent = false;
+            currentMonitorActive = false;
+            
+            // 강제 중지 상태 활성화
+            forceStopActivated = true;
+            
+            // 디스플레이 업데이트
+            updateDisplayState();
+            
+            Serial.println("검사가 중지되었습니다. 장치를 분리했다가 다시 연결해주세요.");
+          }
+        }
+      }
+    }
+    
+    lastSwitchState = currentSwitchState;
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   Wire.begin(21, 22); // ESP32: SDA=21, SCL=22
@@ -562,6 +656,7 @@ void setup() {
 void loop() {
   checkConnectionStatus();    // 연결 상태 확인
   handleRelayControl();      // 릴레이 제어
+  checkSwitchInput();        // 스위치 입력 감지
   if (isConnected && !isDisconnecting) {
     checkCANCommunication();
   }
