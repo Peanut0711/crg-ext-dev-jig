@@ -110,6 +110,28 @@ unsigned long lastSwitchScanTime = 0;  // 마지막 스캔 시간
 bool isSwitchPressed = false;      // 스위치 눌림 상태
 bool forceStopActivated = false;   // 강제 중지 활성화 여부
 
+// 명령 전송 상태 정의
+enum CommandState {
+  CMD_IDLE,           // 대기 상태
+  CMD_RMC_ON,         // RMC ON 명령 전송
+  CMD_LED_MODE,       // LED 모드 설정
+  CMD_LED_START,      // LED 검사 시작
+  CMD_LED_WAIT,       // LED 동작 확인 대기
+  CMD_LED_PAUSE,      // LED 검사 일시정지
+  CMD_VIB_MODE,       // 진동 모드 설정
+  CMD_TEMP_SET,       // 온도 설정
+  CMD_STRENGTH_SET,   // 강도 설정
+  CMD_VIB_START,      // 진동 검사 시작
+  CMD_COMPLETE        // 완료
+};
+
+// 명령 전송 관련 변수
+CommandState cmdState = CMD_IDLE;
+unsigned long cmdStartTime = 0;
+const unsigned long CMD_DELAY_1_MS = 100;    // 100ms
+const unsigned long CMD_DELAY_2_MS = 500;    // 500ms
+const unsigned long LED_CHECK_MS = 3000;     // 3초
+
 // OLED 상태 표시 함수 (상태만 표시)
 void updateDisplayState() {
   if (!stateChanged) return;
@@ -286,24 +308,11 @@ void checkCANCommunication() {
       if (!isCanConnected) {  // CAN 연결이 처음 확인된 경우에만
         isCanConnected = true;
         Serial.println("CAN 통신 연결 확인 - 장비 제어 명령 전송 시작");
-        sendExtDevTestCommands();  // CAN 연결 확인 시 한 번만 명령 전송
+        
+        // 상태 머신 초기화
+        cmdState = CMD_IDLE;
+        commandsSent = false;
       }
-      
-      // CAN 수신 메시지 출력 비활성화
-      /*
-      Serial.print("CAN 수신: ID=0x");
-      Serial.print(message.id, HEX);
-      Serial.print(", DLC=");
-      Serial.print(message.len);
-      Serial.print(", Data=");
-      
-      for (int i = 0; i < message.len; i++) {
-        Serial.print("0x");
-        Serial.print(message.data[i], HEX);
-        Serial.print(" ");
-      }
-      Serial.println();
-      */
     }
   }
 }
@@ -450,73 +459,118 @@ void handleDisconnectingState(unsigned long currentMillis) {
 void sendExtDevTestCommands() {
   if (commandsSent) return;
   
-  Serial.println("\n=== 장비 제어 명령 전송 시작 ===");
+  unsigned long currentMillis = millis();
   
-  // RMC ON 명령
-  Serial.println("1. RMC ON 명령 전송 중...");
-  if (sendCanMessage(RMC_ID, 0, 1, 2)) {
-    Serial.println("   RMC ON 명령 전송 완료");
-    delay(CMD_DELAY_1);
-    
-    // LED 검사 모드 설정 (마사지 모드 4)
-    Serial.println("2. LED 검사 모드 설정 중...");
-    if (sendCanMessage(RMC_ID, 6, 22, 4)) {
-      Serial.println("   LED 검사 모드 설정 완료");
-      delay(CMD_DELAY_1);
+  switch (cmdState) {
+    case CMD_IDLE:
+      Serial.println("\n=== 장비 제어 명령 전송 시작 ===");
+      cmdState = CMD_RMC_ON;
+      break;
       
-      // LED 검사 시작 (재생)
-      Serial.println("3. LED 검사 시작...");
-      if (sendCanMessage(RMC_ID, 6, 21, 1)) {
-        Serial.println("   LED 검사 시작 완료");
-        currentState = LED_TEST;
-        stateChanged = true;  // 상태 변경 플래그 설정
-        updateDisplayState();
-        Serial.println("   LED 동작 확인 중... (3초)");
-        delay(LED_CHECK_TIME);
-        
-        // LED 검사 일시정지
-        Serial.println("4. LED 검사 일시정지...");
-        if (sendCanMessage(RMC_ID, 6, 21, 2)) {
-          Serial.println("   LED 검사 일시정지 완료");
-          delay(CMD_DELAY_1);
-          
-          // 진동 검사 모드 설정 (마사지 모드 1)
-          Serial.println("5. 진동 검사 모드 설정 중...");
-          if (sendCanMessage(RMC_ID, 6, 22, 1)) {
-            Serial.println("   진동 검사 모드 설정 완료");
-            delay(CMD_DELAY_1);
-            
-            // 온도 설정
-            Serial.println("6. 온도 설정 중...");
-            if (sendCanMessage(RMC_ID, 6, 28, 450)) {
-              Serial.println("   온도 설정 완료");
-              delay(CMD_DELAY_1);
-              
-              // 마사지 강도 설정
-              Serial.println("7. 마사지 강도 설정 중...");
-              if (sendCanMessage(RMC_ID, 6, 23, 3)) {
-                Serial.println("   마사지 강도 설정 완료");
-                delay(CMD_DELAY_2);
-                
-                // 진동 검사 시작 (재생)
-                Serial.println("8. 진동 검사 시작...");
-                if (sendCanMessage(RMC_ID, 6, 21, 1)) {
-                  Serial.println("   진동 검사 시작 완료");
-                  currentState = VIB_TEST;
-                  stateChanged = true;  // 상태 변경 플래그 설정
-                  updateDisplayState();
-                  commandsSent = true;
-                  currentMonitorActive = true; // 전류 모니터링 시작
-                  lastCurrentPrintTime = millis();
-                  Serial.println("전류 모니터링 시작");
-                  Serial.println("=== 장비 제어 명령 전송 완료 ===\n");
-                }
-              }
-            }
-          }
+    case CMD_RMC_ON:
+      Serial.println("1. RMC ON 명령 전송 중...");
+      if (sendCanMessage(RMC_ID, 0, 1, 2)) {
+        Serial.println("   RMC ON 명령 전송 완료");
+        cmdStartTime = currentMillis;
+        cmdState = CMD_LED_MODE;
+      }
+      break;
+      
+    case CMD_LED_MODE:
+      if (currentMillis - cmdStartTime >= CMD_DELAY_1_MS) {
+        Serial.println("2. LED 검사 모드 설정 중...");
+        if (sendCanMessage(RMC_ID, 6, 22, 4)) {
+          Serial.println("   LED 검사 모드 설정 완료");
+          cmdStartTime = currentMillis;
+          cmdState = CMD_LED_START;
         }
       }
-    }
+      break;
+      
+    case CMD_LED_START:
+      if (currentMillis - cmdStartTime >= CMD_DELAY_1_MS) {
+        Serial.println("3. LED 검사 시작...");
+        if (sendCanMessage(RMC_ID, 6, 21, 1)) {
+          Serial.println("   LED 검사 시작 완료");
+          currentState = LED_TEST;
+          stateChanged = true;
+          updateDisplayState();
+          Serial.println("   LED 동작 확인 중... (3초)");
+          cmdStartTime = currentMillis;
+          cmdState = CMD_LED_WAIT;
+        }
+      }
+      break;
+      
+    case CMD_LED_WAIT:
+      if (currentMillis - cmdStartTime >= LED_CHECK_MS) {
+        cmdState = CMD_LED_PAUSE;
+      }
+      break;
+      
+    case CMD_LED_PAUSE:
+      Serial.println("4. LED 검사 일시정지...");
+      if (sendCanMessage(RMC_ID, 6, 21, 2)) {
+        Serial.println("   LED 검사 일시정지 완료");
+        cmdStartTime = currentMillis;
+        cmdState = CMD_VIB_MODE;
+      }
+      break;
+      
+    case CMD_VIB_MODE:
+      if (currentMillis - cmdStartTime >= CMD_DELAY_1_MS) {
+        Serial.println("5. 진동 검사 모드 설정 중...");
+        if (sendCanMessage(RMC_ID, 6, 22, 1)) {
+          Serial.println("   진동 검사 모드 설정 완료");
+          cmdStartTime = currentMillis;
+          cmdState = CMD_TEMP_SET;
+        }
+      }
+      break;
+      
+    case CMD_TEMP_SET:
+      if (currentMillis - cmdStartTime >= CMD_DELAY_1_MS) {
+        Serial.println("6. 온도 설정 중...");
+        if (sendCanMessage(RMC_ID, 6, 28, 450)) {
+          Serial.println("   온도 설정 완료");
+          cmdStartTime = currentMillis;
+          cmdState = CMD_STRENGTH_SET;
+        }
+      }
+      break;
+      
+    case CMD_STRENGTH_SET:
+      if (currentMillis - cmdStartTime >= CMD_DELAY_1_MS) {
+        Serial.println("7. 마사지 강도 설정 중...");
+        if (sendCanMessage(RMC_ID, 6, 23, 3)) {
+          Serial.println("   마사지 강도 설정 완료");
+          cmdStartTime = currentMillis;
+          cmdState = CMD_VIB_START;
+        }
+      }
+      break;
+      
+    case CMD_VIB_START:
+      if (currentMillis - cmdStartTime >= CMD_DELAY_2_MS) {
+        Serial.println("8. 진동 검사 시작...");
+        if (sendCanMessage(RMC_ID, 6, 21, 1)) {
+          Serial.println("   진동 검사 시작 완료");
+          currentState = VIB_TEST;
+          stateChanged = true;
+          updateDisplayState();
+          commandsSent = true;
+          currentMonitorActive = true;
+          lastCurrentPrintTime = currentMillis;
+          Serial.println("전류 모니터링 시작");
+          Serial.println("=== 장비 제어 명령 전송 완료 ===\n");
+          cmdState = CMD_COMPLETE;
+        }
+      }
+      break;
+      
+    case CMD_COMPLETE:
+      // 모든 작업 완료
+      break;
   }
 }
 
@@ -657,8 +711,15 @@ void loop() {
   checkConnectionStatus();    // 연결 상태 확인
   handleRelayControl();      // 릴레이 제어
   checkSwitchInput();        // 스위치 입력 감지
+  
   if (isConnected && !isDisconnecting) {
-    checkCANCommunication();
+    checkCANCommunication();  // CAN 통신 확인
+    
+    // CAN이 연결되어 있고, 명령이 전송되지 않았으며, 강제 중지 상태가 아닐 때만 명령 전송
+    if (isCanConnected && !commandsSent && !forceStopActivated) {
+      sendExtDevTestCommands();
+    }
   }
+  
   handleCurrentMonitor(); // 전류 모니터링 주기적 호출
 }
