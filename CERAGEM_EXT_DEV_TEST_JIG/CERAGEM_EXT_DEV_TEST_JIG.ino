@@ -82,6 +82,12 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // 전류 모니터링 함수 (millis 기반, 함수화)
 void handleCurrentMonitor() {
+  // 연결이 해제되었거나 연결 해제 중이면 전류 모니터링 중지
+  if (!isConnected || isDisconnecting) {
+    currentMonitorActive = false;
+    return;
+  }
+
   if (!currentMonitorActive) return;
   unsigned long now = millis();
   
@@ -106,8 +112,8 @@ void handleCurrentMonitor() {
     }
     
     // 피크값 업데이트
-    if (current_A > peakCurrent) {
-      peakCurrent = current_A;
+    if (emaCurrent > peakCurrent) {
+      peakCurrent = emaCurrent;
       justReset = false;  // 새로운 피크값이 생기면 초기화 표시 해제
     }
     
@@ -269,6 +275,14 @@ void handleStateChange(float voltage, bool swStopState) {
       previousMillis = currentMillis;
       rly24vDelay = currentMillis + 500;  // 24V 릴레이 먼저 LOW
       rly5vDelay = currentMillis + 1000;  // 0.5초 후 5V 릴레이 LOW
+      
+      // OLED에 DISCONNECT 표시
+      display.clearDisplay();
+      display.setTextSize(2);
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(0,24);
+      display.println("DISCONNECT");
+      display.display();
     }
   } else {
     // 연결 감지
@@ -276,6 +290,14 @@ void handleStateChange(float voltage, bool swStopState) {
     previousMillis = currentMillis;
     rly24vDelay = currentMillis + 500;    // 24V 릴레이 먼저 HIGH
     rly5vDelay = currentMillis + 1000;    // 0.5초 후 5V 릴레이 HIGH
+    
+    // OLED에 CONNECT 표시
+    display.clearDisplay();
+    display.setTextSize(2);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(22,24);
+    display.println("CONNECT");
+    display.display();
   }
   
   // 상태 변경 메시지 출력
@@ -303,6 +325,13 @@ void handleConnectedState(unsigned long currentMillis) {
     digitalWrite(RLY_24V_PIN, HIGH);
     rly24vState = true;
     Serial.println("24V 릴레이 ON");
+
+    // display.clearDisplay();
+    // display.setTextSize(2);
+    // display.setTextColor(SSD1306_WHITE);
+    // display.setCursor(22,24);
+    // display.println("CONNECT");
+    // display.display();
   }
   if (currentMillis >= rly5vDelay && !rly5vState) {
     digitalWrite(RLY_5V_PIN, HIGH);
@@ -332,12 +361,12 @@ void handleDisconnectingState(unsigned long currentMillis) {
     currentMonitorActive = false; // 장치 분리 시 전류 모니터링 중지
     Serial.println("CAN 통신 상태 및 전류 모니터링 초기화 완료");
     
-    display.clearDisplay();
-    display.setTextSize(2);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(8,24);
-    display.println("DISCONNECT");
-    display.display();
+    // display.clearDisplay();
+    // display.setTextSize(2);
+    // display.setTextColor(SSD1306_WHITE);
+    // display.setCursor(0,24);
+    // display.println("DISCONNECT");
+    // display.display();
   }
 }
 
@@ -460,7 +489,7 @@ void setup() {
   display.clearDisplay();
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(24,24);
+  display.setCursor(22,24);
   display.println("CERAGEM");
   display.display();
   delay(1000);
