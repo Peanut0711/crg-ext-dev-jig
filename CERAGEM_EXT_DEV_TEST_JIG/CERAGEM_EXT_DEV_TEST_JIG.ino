@@ -80,6 +80,45 @@ bool justReset = false;    // 피크값이 방금 초기화되었는지 표시
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
+// 검사 상태 정의
+enum TestState {
+  READY,      // 초기 상태 및 연결 해제 후
+  WAIT,       // 연결 직후 대기
+  LED_TEST,   // LED 검사 중
+  VIB_TEST,   // 진동 검사 중
+  DISCON      // 연결 해제
+};
+
+TestState currentState = READY;  // 현재 검사 상태
+unsigned long disconnectTime = 0;  // 연결 해제 시간 저장
+
+// OLED 상태 표시 함수
+void updateDisplayState() {
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0,0);
+  
+  switch(currentState) {
+    case READY:
+      display.println("READY");
+      break;
+    case WAIT:
+      display.println("WAIT");
+      break;
+    case LED_TEST:
+      display.println("LED TEST");
+      break;
+    case VIB_TEST:
+      display.println("VIB TEST");
+      break;
+    case DISCON:
+      display.println("DISCON");
+      break;
+  }
+  display.display();
+}
+
 // 전류 모니터링 함수 (millis 기반, 함수화)
 void handleCurrentMonitor() {
   // 연결이 해제되었거나 연결 해제 중이면 전류 모니터링 중지
@@ -275,14 +314,9 @@ void handleStateChange(float voltage, bool swStopState) {
       previousMillis = currentMillis;
       rly24vDelay = currentMillis + 500;  // 24V 릴레이 먼저 LOW
       rly5vDelay = currentMillis + 1000;  // 0.5초 후 5V 릴레이 LOW
-      
-      // OLED에 DISCONNECT 표시
-      display.clearDisplay();
-      display.setTextSize(2);
-      display.setTextColor(SSD1306_WHITE);
-      display.setCursor(0,24);
-      display.println("DISCONNECT");
-      display.display();
+      currentState = DISCON;
+      disconnectTime = currentMillis;  // 연결 해제 시간 저장
+      updateDisplayState();
     }
   } else {
     // 연결 감지
@@ -290,14 +324,8 @@ void handleStateChange(float voltage, bool swStopState) {
     previousMillis = currentMillis;
     rly24vDelay = currentMillis + 500;    // 24V 릴레이 먼저 HIGH
     rly5vDelay = currentMillis + 1000;    // 0.5초 후 5V 릴레이 HIGH
-    
-    // OLED에 CONNECT 표시
-    display.clearDisplay();
-    display.setTextSize(2);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(22,24);
-    display.println("CONNECT");
-    display.display();
+    currentState = WAIT;
+    updateDisplayState();
   }
   
   // 상태 변경 메시지 출력
@@ -336,7 +364,7 @@ void handleConnectedState(unsigned long currentMillis) {
   }
 }
 
-// 연결 해제 중일 때 릴레이 제어
+// 연결해제 시 릴레이 제어
 void handleDisconnectingState(unsigned long currentMillis) {
   if (currentMillis >= rly24vDelay && rly24vState) {
     digitalWrite(RLY_24V_PIN, LOW);
@@ -352,7 +380,14 @@ void handleDisconnectingState(unsigned long currentMillis) {
     isCanConnected = false;
     commandsSent = false;
     currentMonitorActive = false; // 장치 분리 시 전류 모니터링 중지
-    Serial.println("CAN 통신 상태 및 전류 모니터링 초기화 완료");    
+    Serial.println("CAN 통신 상태 및 전류 모니터링 초기화 완료");
+  }
+  
+  // 연결 해제 후 2초 뒤 READY 상태로 변경
+  if (currentState == DISCON && (currentMillis - disconnectTime >= 2000)) {
+    Serial.println("연결 해제 후 2초 뒤 READY 상태로 변경");
+    currentState = READY;
+    updateDisplayState();
   }
 }
 
@@ -378,6 +413,8 @@ void sendExtDevTestCommands() {
       Serial.println("3. LED 검사 시작...");
       if (sendCanMessage(RMC_ID, 6, 21, 1)) {
         Serial.println("   LED 검사 시작 완료");
+        currentState = LED_TEST;
+        updateDisplayState();
         Serial.println("   LED 동작 확인 중... (3초)");
         delay(LED_CHECK_TIME);
         
@@ -409,34 +446,20 @@ void sendExtDevTestCommands() {
                 Serial.println("8. 진동 검사 시작...");
                 if (sendCanMessage(RMC_ID, 6, 21, 1)) {
                   Serial.println("   진동 검사 시작 완료");
+                  currentState = VIB_TEST;
+                  updateDisplayState();
                   commandsSent = true;
                   currentMonitorActive = true; // 전류 모니터링 시작
                   lastCurrentPrintTime = millis();
                   Serial.println("전류 모니터링 시작");
                   Serial.println("=== 장비 제어 명령 전송 완료 ===\n");
-                } else {
-                  Serial.println("   진동 검사 시작 실패");
                 }
-              } else {
-                Serial.println("   마사지 강도 설정 실패");
               }
-            } else {
-              Serial.println("   온도 설정 실패");
             }
-          } else {
-            Serial.println("   진동 검사 모드 설정 실패");
           }
-        } else {
-          Serial.println("   LED 검사 일시정지 실패");
         }
-      } else {
-        Serial.println("   LED 검사 시작 실패");
       }
-    } else {
-      Serial.println("   LED 검사 모드 설정 실패");
     }
-  } else {
-    Serial.println("   RMC ON 명령 전송 실패");
   }
 }
 
@@ -475,8 +498,8 @@ void setup() {
   display.clearDisplay();
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(22,24);
-  display.println("CERAGEM");
+  display.setCursor(0,0);
+  display.println("READY");
   display.display();
   delay(1000);
   display.clearDisplay();
