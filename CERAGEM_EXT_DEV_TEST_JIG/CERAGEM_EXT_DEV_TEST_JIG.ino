@@ -48,6 +48,7 @@ unsigned long rly24vDelay = 0;       // 24V 릴레이 제어 지연 시간
 bool rly5vState = false;             // 5V 릴레이 상태
 bool rly24vState = false;            // 24V 릴레이 상태
 bool isDisconnecting = false;        // 연결 해제 진행 중 여부
+unsigned long readyStateDelay = 0;   // READY 상태로 전환하기 위한 지연 시간
 
 // EMA 관련 변수 추가
 float emaCurrent = 0.0;    // EMA 처리된 전류값
@@ -83,7 +84,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // 검사 상태 정의
 enum TestState {
   READY,      // 초기 상태 및 연결 해제 후
-  WAIT,       // 연결 직후 대기
+  CONNECTED,  // 연결 직후 대기
   LED_TEST,   // LED 검사 중
   VIB_TEST,   // 진동 검사 중
   DISCON      // 연결 해제
@@ -92,8 +93,15 @@ enum TestState {
 TestState currentState = READY;  // 현재 검사 상태
 unsigned long disconnectTime = 0;  // 연결 해제 시간 저장
 
-// OLED 상태 표시 함수
+// 디스플레이 업데이트 관련 변수 추가
+unsigned long lastDisplayUpdate = 0;
+const unsigned long DISPLAY_UPDATE_INTERVAL = 100; // 100ms
+bool stateChanged = false;
+
+// OLED 상태 표시 함수 (상태만 표시)
 void updateDisplayState() {
+  if (!stateChanged) return;
+  
   display.clearDisplay();
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
@@ -103,8 +111,8 @@ void updateDisplayState() {
     case READY:
       display.println("READY");
       break;
-    case WAIT:
-      display.println("WAIT");
+    case CONNECTED:
+      display.println("CONNECTED");
       break;
     case LED_TEST:
       display.println("LED TEST");
@@ -115,6 +123,31 @@ void updateDisplayState() {
     case DISCON:
       display.println("DISCON");
       break;
+  }
+  display.display();
+  stateChanged = false;
+}
+
+// OLED 전류 표시 함수 (전류값만 표시)
+void updateDisplayCurrent(float current, float peak) {
+  // 전류값 영역만 지우기
+  display.fillRect(0, 16, SCREEN_WIDTH, 32, SSD1306_BLACK);
+  
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+  
+  display.setCursor(0,16);
+  display.print("CURR: ");
+  display.print(current, 1);
+  display.println("A");
+
+  display.setCursor(0,32);
+  display.print("PEAK: ");
+  if (justReset) {
+    display.println("    ");  // 공백으로 표시
+  } else {
+    display.print(peak, 1);
+    display.println("A");
   }
   display.display();
 }
@@ -165,25 +198,11 @@ void handleCurrentMonitor() {
     Serial.print(justReset ? "-.-" : String(peakCurrent, 1));
     Serial.println(" A");
     
-    // OLED 출력
-    display.clearDisplay();
-    display.setTextSize(2);
-    display.setTextColor(SSD1306_WHITE);
-
-    display.setCursor(0,16);
-    display.print("CURR: ");
-    display.print(emaCurrent, 1);
-    display.println("A");
-
-    display.setCursor(0,32);
-    display.print("PEAK: ");
-    if (justReset) {
-      display.println("    ");  // 공백으로 표시
-    } else {
-      display.print(peakCurrent, 1);
-      display.println("A");
+    // OLED 출력 (전류값만 업데이트)
+    if (now - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
+      updateDisplayCurrent(emaCurrent, peakCurrent);
+      lastDisplayUpdate = now;
     }
-    display.display();
   }
 }
 
@@ -314,8 +333,9 @@ void handleStateChange(float voltage, bool swStopState) {
       previousMillis = currentMillis;
       rly24vDelay = currentMillis + 500;  // 24V 릴레이 먼저 LOW
       rly5vDelay = currentMillis + 1000;  // 0.5초 후 5V 릴레이 LOW
-      currentState = DISCON;
+      currentState = READY;
       disconnectTime = currentMillis;  // 연결 해제 시간 저장
+      stateChanged = true;  // 상태 변경 플래그 설정
       updateDisplayState();
     }
   } else {
@@ -324,7 +344,8 @@ void handleStateChange(float voltage, bool swStopState) {
     previousMillis = currentMillis;
     rly24vDelay = currentMillis + 500;    // 24V 릴레이 먼저 HIGH
     rly5vDelay = currentMillis + 1000;    // 0.5초 후 5V 릴레이 HIGH
-    currentState = WAIT;
+    currentState = CONNECTED;
+    stateChanged = true;  // 상태 변경 플래그 설정
     updateDisplayState();
   }
   
@@ -374,21 +395,25 @@ void handleDisconnectingState(unsigned long currentMillis) {
   if (currentMillis >= rly5vDelay && rly5vState) {
     digitalWrite(RLY_5V_PIN, LOW);
     rly5vState = false;
-    Serial.println("5V 릴레이 OFF");
     isDisconnecting = false;
     // CAN 관련 상태 초기화
     isCanConnected = false;
     commandsSent = false;
-    currentMonitorActive = false; // 장치 분리 시 전류 모니터링 중지
+    currentMonitorActive = false;
     Serial.println("CAN 통신 상태 및 전류 모니터링 초기화 완료");
+    
+    // READY 상태로 전환하기 위한 타이머 설정
+    readyStateDelay = currentMillis + 2000;
   }
   
-  // 연결 해제 후 2초 뒤 READY 상태로 변경
-  if (currentState == DISCON && (currentMillis - disconnectTime >= 2000)) {
-    Serial.println("연결 해제 후 2초 뒤 READY 상태로 변경");
-    currentState = READY;
-    updateDisplayState();
-  }
+  // READY 상태로 전환
+  // if (currentState == DISCON && currentMillis >= readyStateDelay) {
+  //   Serial.println("연결 해제 후 2초 뒤 READY 상태로 변경");
+  //   currentState = READY;
+  //   stateChanged = true;
+  //   updateDisplayState();
+  //   readyStateDelay = 0;  // 타이머 초기화
+  // }
 }
 
 // 장비 제어 명령 전송
@@ -414,6 +439,7 @@ void sendExtDevTestCommands() {
       if (sendCanMessage(RMC_ID, 6, 21, 1)) {
         Serial.println("   LED 검사 시작 완료");
         currentState = LED_TEST;
+        stateChanged = true;  // 상태 변경 플래그 설정
         updateDisplayState();
         Serial.println("   LED 동작 확인 중... (3초)");
         delay(LED_CHECK_TIME);
@@ -447,6 +473,7 @@ void sendExtDevTestCommands() {
                 if (sendCanMessage(RMC_ID, 6, 21, 1)) {
                   Serial.println("   진동 검사 시작 완료");
                   currentState = VIB_TEST;
+                  stateChanged = true;  // 상태 변경 플래그 설정
                   updateDisplayState();
                   commandsSent = true;
                   currentMonitorActive = true; // 전류 모니터링 시작
@@ -495,14 +522,10 @@ void setup() {
     Serial.println(F("SSD1315(OLED) 초기화 실패"));
     for(;;); // 멈춤
   }
-  display.clearDisplay();
-  display.setTextSize(2);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0,0);
-  display.println("READY");
-  display.display();
-  delay(1000);
-  display.clearDisplay();
+  
+  currentState = READY;
+  stateChanged = true;  // 상태 변경 플래그 설정
+  updateDisplayState();
 
   scanI2CDevices(); // I2C 스캐너 먼저 실행
 
