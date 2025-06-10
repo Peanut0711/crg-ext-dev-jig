@@ -18,6 +18,7 @@
 #define CAN_SPEED       500000  // CAN 통신 속도 (500kbps)
 #define CAN_RETRY_COUNT 3       // CAN 메시지 재전송 횟수
 #define CAN_RETRY_DELAY 100     // 재전송 간격 (ms)
+#define CAN_TIMEOUT_MS  1500    // CAN 타임아웃 시간 (1.5초)
 
 // CAN ID 정의
 #define RMC_ID          0x01    // RMC CAN ID
@@ -132,6 +133,11 @@ const unsigned long CMD_DELAY_1_MS = 100;    // 100ms
 const unsigned long CMD_DELAY_2_MS = 500;    // 500ms
 const unsigned long LED_CHECK_MS = 3000;     // 3초
 
+// CAN 통신 타임아웃 관련 변수 추가
+unsigned long canTimeoutStart = 0;  // CAN 타임아웃 시작 시간
+bool canError = false;  // CAN 에러 상태
+bool canCheckStarted = false;  // CAN 체크 시작 여부
+
 // OLED 전류 표시 함수 (전류값만 표시)
 void updateDisplayCurrent(float current) {
   // 전류값 영역만 지우기
@@ -154,35 +160,37 @@ void updateDisplayCurrent(float current) {
 void updateDisplayState() {
   if (!stateChanged) return;
   
-  // display.clearDisplay();
   display.fillRect(0, 0, SCREEN_WIDTH, 16, SSD1306_BLACK);
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0,0);
   
-  switch(currentState) {
-    case READY:
-      display.clearDisplay();
-      // display.println("READY");
-      break;
-    case CONNECTED:
-      display.println("CONNECTED");
-      // 연결 시점에 전압값 표시
-      display.fillRect(0, 16, SCREEN_WIDTH, 16, SSD1306_BLACK);
-      display.setCursor(0,16);
-      display.print("VOLT:");
-      display.print((analogRead(ADC_PIN) * 3.3) / 4095.0, 2);
-      display.println("V");
-      break;
-    case LED_TEST:
-      display.println("LED TEST");
-      break;
-    case VIB_TEST:
-      display.println("VIB TEST");
-      break;
-    case DISCON:
-      display.println("DISCON");
-      break;
+  if (canError) {
+    display.println("CAN ERROR");
+  } else {
+    switch(currentState) {
+      case READY:
+        display.clearDisplay();
+        break;
+      case CONNECTED:
+        display.println("CONNECTED");
+        // 연결 시점에 전압값 표시
+        display.fillRect(0, 16, SCREEN_WIDTH, 16, SSD1306_BLACK);
+        display.setCursor(0,16);
+        display.print("VOLT:");
+        display.print((analogRead(ADC_PIN) * 3.3) / 4095.0, 2);
+        display.println("V");
+        break;
+      case LED_TEST:
+        display.println("LED TEST");
+        break;
+      case VIB_TEST:
+        display.println("VIB TEST");
+        break;
+      case DISCON:
+        display.println("DISCON");
+        break;
+    }
   }
   display.display();
   stateChanged = false;
@@ -266,6 +274,7 @@ bool sendCanMessage(uint32_t id, uint8_t bank, uint16_t number, uint32_t data) {
       Serial.print("/");
       Serial.print(CAN_RETRY_COUNT);
       Serial.println(")");
+      canTimeoutStart = millis();  // CAN 메시지 전송 성공 시 타임아웃 시간 갱신
       return true;
     }
     
@@ -299,21 +308,63 @@ void initCAN() {
 
 // CAN 통신 모니터링
 void checkCANCommunication() {
+  // CAN 에러 상태면 체크 중단
+  if (canError) {
+    return;
+  }
+
   unsigned long currentMillis = millis();
   
-  // 5V 릴레이가 ON이고, 500ms가 지난 후에만 CAN 통신 체크
-  if (rly5vState && (currentMillis - lastCanCheckTime >= 500)) {
-    lastCanCheckTime = currentMillis;
-    
-    CANMessage message;
-    if (ACAN_ESP32::can.receive(message)) {
-      if (!isCanConnected) {  // CAN 연결이 처음 확인된 경우에만
-        isCanConnected = true;
-        Serial.println("CAN 통신 연결 확인 - 장비 제어 명령 전송 시작");
+  // 5V 릴레이가 ON일 때만 처리
+  if (rly5vState) {
+    if (!canCheckStarted) {
+      // 5V 릴레이 ON 후 500ms 대기
+      if (currentMillis - lastCanCheckTime >= 500) {
+        canCheckStarted = true;  // CAN 체크 시작
+        canTimeoutStart = currentMillis;  // 타임아웃 시작 시간 설정
+        Serial.println("CAN 통신 체크 시작 - 메시지 송신");
         
-        // 상태 머신 초기화
-        cmdState = CMD_IDLE;
-        commandsSent = false;
+        // CAN 메시지 송신
+        if (sendCanMessage(RMC_ID, 0, 1, 2)) {
+          Serial.println("CAN 메시지 송신 완료 - 응답 대기 중");
+        } else {
+          Serial.println("CAN 메시지 송신 실패");
+          canError = true;
+          currentState = READY;
+          stateChanged = true;
+          updateDisplayState();
+        }
+      }
+    } else {
+      CANMessage message;
+      if (ACAN_ESP32::can.receive(message)) {
+        if (!isCanConnected) {  // CAN 연결이 처음 확인된 경우에만
+          isCanConnected = true;
+          canError = false;  // CAN 에러 상태 해제
+          Serial.println("CAN 통신 연결 확인 - 장비 제어 명령 전송 시작");
+          
+          // 상태 머신 초기화
+          cmdState = CMD_IDLE;
+          commandsSent = false;
+        }
+        canTimeoutStart = currentMillis;  // CAN 메시지 수신 시 타임아웃 시작 시간 갱신
+      } else {
+        // CAN 메시지가 수신되지 않았고, 1.5초가 지났을 경우
+        if (currentMillis - canTimeoutStart >= CAN_TIMEOUT_MS) {
+          canError = true;
+          currentState = READY;  // READY 상태로 변경
+          stateChanged = true;   // 상태 변경 플래그 설정
+          updateDisplayState();  // 디스플레이 업데이트
+          Serial.println("CAN 통신 타임아웃 - CAN 라인 점검 필요");
+          
+          // 릴레이 차단
+          digitalWrite(RLY_24V_PIN, LOW);
+          digitalWrite(RLY_5V_PIN, LOW);
+          rly24vState = false;
+          rly5vState = false;
+          isCanConnected = false;
+          canCheckStarted = false;
+        }
       }
     }
   }
@@ -361,12 +412,23 @@ void handleStateChange(float voltage, bool swStopState) {
     if (!isDisconnecting) {
       isDisconnecting = true;
       previousMillis = currentMillis;
-      rly24vDelay = currentMillis + 500;  // 24V 릴레이 먼저 LOW
-      rly5vDelay = currentMillis + 1000;  // 0.5초 후 5V 릴레이 LOW
+      rly24vDelay = currentMillis + 500;  // 500ms 이후 24V 릴레이와 5V릴레이 모두 OFF
+      rly5vDelay = currentMillis + 500;  
       currentState = READY;
       disconnectTime = currentMillis;  // 연결 해제 시간 저장
-      stateChanged = true;  // 상태 변경 플래그 설정
+      stateChanged = true;  // 상태 변경 플래그 설정      
+      
+      // 연결 해제 시 CAN 관련 모든 상태 초기화
+      canError = false;
+      isCanConnected = false;
+      canCheckStarted = false;
+      canTimeoutStart = 0;
+      lastCanCheckTime = 0;
+      cmdState = CMD_IDLE;
+      commandsSent = false;
+
       updateDisplayState();
+      Serial.println("CAN 관련 상태 초기화 완료");
     }
   } else {
     // 연결 감지
@@ -411,6 +473,11 @@ void handleRelayControl() {
 
 // 연결 상태일 때 릴레이 제어
 void handleConnectedState(unsigned long currentMillis) {
+  // CAN 에러 상태면 릴레이 제어 중단
+  if (canError) {
+    return;
+  }
+
   if (currentMillis >= rly24vDelay && !rly24vState) {
     digitalWrite(RLY_24V_PIN, HIGH);
     rly24vState = true;
@@ -421,8 +488,10 @@ void handleConnectedState(unsigned long currentMillis) {
     rly5vState = true;
     Serial.println("5V 릴레이 ON");
     // 5V 인가 후 500ms 대기 후 CAN 통신 시작
-    lastCanCheckTime = currentMillis + 500;
-    Serial.println("CAN 통신 대기 중... (500ms)");
+    lastCanCheckTime = currentMillis + CAN_TIMEOUT_MS;  // 1.5초 후 CAN 체크 시작
+    canTimeoutStart = currentMillis + CAN_TIMEOUT_MS;  // 1.5초 후 타임아웃 체크
+    canCheckStarted = false;  // CAN 체크 시작 플래그 초기화
+    Serial.println("CAN 통신 대기 중... (1.5초)");
   }
 }
 
@@ -459,7 +528,7 @@ void handleDisconnectingState(unsigned long currentMillis) {
 
 // 장비 제어 명령 전송
 void sendExtDevTestCommands() {
-  if (commandsSent) return;
+  if (commandsSent || canError) return;  // CAN 에러 상태면 명령 전송 중단
   
   unsigned long currentMillis = millis();
   
@@ -475,6 +544,12 @@ void sendExtDevTestCommands() {
         Serial.println("   RMC ON 명령 전송 완료");
         cmdStartTime = currentMillis;
         cmdState = CMD_LED_MODE;
+      } else {
+        Serial.println("   RMC ON 명령 전송 실패");
+        canError = true;
+        currentState = READY;
+        stateChanged = true;
+        updateDisplayState();
       }
       break;
       
@@ -485,6 +560,12 @@ void sendExtDevTestCommands() {
           Serial.println("   LED 검사 모드 설정 완료");
           cmdStartTime = currentMillis;
           cmdState = CMD_LED_START;
+        } else {
+          Serial.println("   LED 검사 모드 설정 실패");
+          canError = true;
+          currentState = READY;
+          stateChanged = true;
+          updateDisplayState();
         }
       }
       break;
@@ -500,6 +581,12 @@ void sendExtDevTestCommands() {
           Serial.println("   LED 동작 확인 중... (3초)");
           cmdStartTime = currentMillis;
           cmdState = CMD_LED_WAIT;
+        } else {
+          Serial.println("   LED 검사 시작 실패");
+          canError = true;
+          currentState = READY;
+          stateChanged = true;
+          updateDisplayState();
         }
       }
       break;
@@ -516,6 +603,12 @@ void sendExtDevTestCommands() {
         Serial.println("   LED 검사 일시정지 완료");
         cmdStartTime = currentMillis;
         cmdState = CMD_VIB_MODE;
+      } else {
+        Serial.println("   LED 검사 일시정지 실패");
+        canError = true;
+        currentState = READY;
+        stateChanged = true;
+        updateDisplayState();
       }
       break;
       
@@ -526,6 +619,12 @@ void sendExtDevTestCommands() {
           Serial.println("   진동 검사 모드 설정 완료");
           cmdStartTime = currentMillis;
           cmdState = CMD_TEMP_SET;
+        } else {
+          Serial.println("   진동 검사 모드 설정 실패");
+          canError = true;
+          currentState = READY;
+          stateChanged = true;
+          updateDisplayState();
         }
       }
       break;
@@ -537,6 +636,12 @@ void sendExtDevTestCommands() {
           Serial.println("   온도 설정 완료");
           cmdStartTime = currentMillis;
           cmdState = CMD_STRENGTH_SET;
+        } else {
+          Serial.println("   온도 설정 실패");
+          canError = true;
+          currentState = READY;
+          stateChanged = true;
+          updateDisplayState();
         }
       }
       break;
@@ -548,6 +653,12 @@ void sendExtDevTestCommands() {
           Serial.println("   마사지 강도 설정 완료");
           cmdStartTime = currentMillis;
           cmdState = CMD_VIB_START;
+        } else {
+          Serial.println("   마사지 강도 설정 실패");
+          canError = true;
+          currentState = READY;
+          stateChanged = true;
+          updateDisplayState();
         }
       }
       break;
@@ -566,6 +677,12 @@ void sendExtDevTestCommands() {
           Serial.println("전류 모니터링 시작");
           Serial.println("=== 장비 제어 명령 전송 완료 ===\n");
           cmdState = CMD_COMPLETE;
+        } else {
+          Serial.println("   진동 검사 시작 실패");
+          canError = true;
+          currentState = READY;
+          stateChanged = true;
+          updateDisplayState();
         }
       }
       break;
@@ -671,6 +788,7 @@ void setup() {
   if(!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
     Serial.println(F("SSD1315(OLED) 초기화 실패"));
     for(;;); // 멈춤
+    //TODO: SW 버튼을 주기적으로 깜빡이게 해서 동작 오류 표시 처리 필요
   }
   
   currentState = READY;
@@ -710,7 +828,7 @@ void setup() {
 }
 
 void loop() {
-  checkConnectionStatus();    // 연결 상태 확인
+  checkConnectionStatus();   // 연결 상태 확인
   handleRelayControl();      // 릴레이 제어
   checkSwitchInput();        // 스위치 입력 감지
   
