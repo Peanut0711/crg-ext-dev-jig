@@ -27,10 +27,10 @@
 #define CMD_DELAY_2     500     // 마사지 제어 전 지연 시간 (ms)
 #define LED_CHECK_TIME  3000    // LED 검사 시간 (3초)
 #define PEAK_RESET_TIME 2000    // 피크값 초기화 시간 (2초)
-#define CURRENT_PRINT_TIME 300  // 전류 출력 주기 (300ms)
+#define CURRENT_PRINT_TIME 500  // 전류 출력 주기 (500ms)
 
 // 제품 연결 상태 판단을 위한 임계값 설정
-const float CONNECTED_THRESHOLD = 2.0;  // 2.0V 미만이면 제품 연결로 판단
+const float CONNECTED_THRESHOLD = 2.0;  // 2.0V 이하이면 제품 연결로 판단
 const unsigned long DEBOUNCE_DELAY = 500;  // 디바운싱 시간 (500ms)
 
 bool isConnected = false;  // 제품 연결 상태
@@ -132,21 +132,47 @@ const unsigned long CMD_DELAY_1_MS = 100;    // 100ms
 const unsigned long CMD_DELAY_2_MS = 500;    // 500ms
 const unsigned long LED_CHECK_MS = 3000;     // 3초
 
+// OLED 전류 표시 함수 (전류값만 표시)
+void updateDisplayCurrent(float current) {
+  // 전류값 영역만 지우기
+  display.fillRect(0, 32, SCREEN_WIDTH, 16, SSD1306_BLACK);
+  
+  // VIB_TEST 상태일 때만 전류값 표시
+  if (currentState == VIB_TEST) {
+    display.setTextSize(2);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0,32);
+    display.print("CURR:");
+    display.print(current, 2);
+    display.println("A");
+  }
+  
+  display.display();
+}
+
 // OLED 상태 표시 함수 (상태만 표시)
 void updateDisplayState() {
   if (!stateChanged) return;
   
-  display.clearDisplay();
+  // display.clearDisplay();
+  display.fillRect(0, 0, SCREEN_WIDTH, 16, SSD1306_BLACK);
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0,0);
   
   switch(currentState) {
     case READY:
-      display.println("READY");
+      display.clearDisplay();
+      // display.println("READY");
       break;
     case CONNECTED:
       display.println("CONNECTED");
+      // 연결 시점에 전압값 표시
+      display.fillRect(0, 16, SCREEN_WIDTH, 16, SSD1306_BLACK);
+      display.setCursor(0,16);
+      display.print("VOLT:");
+      display.print((analogRead(ADC_PIN) * 3.3) / 4095.0, 2);
+      display.println("V");
       break;
     case LED_TEST:
       display.println("LED TEST");
@@ -160,30 +186,6 @@ void updateDisplayState() {
   }
   display.display();
   stateChanged = false;
-}
-
-// OLED 전류 표시 함수 (전류값만 표시)
-void updateDisplayCurrent(float current, float peak) {
-  // 전류값 영역만 지우기
-  display.fillRect(0, 16, SCREEN_WIDTH, 32, SSD1306_BLACK);
-  
-  display.setTextSize(2);
-  display.setTextColor(SSD1306_WHITE);
-  
-  display.setCursor(0,16);
-  display.print("CURR: ");
-  display.print(current, 1);
-  display.println("A");
-
-  display.setCursor(0,32);
-  display.print("PEAK: ");
-  if (justReset) {
-    display.println("    ");  // 공백으로 표시
-  } else {
-    display.print(peak, 1);
-    display.println("A");
-  }
-  display.display();
 }
 
 // 전류 모니터링 함수 (millis 기반, 함수화)
@@ -233,8 +235,8 @@ void handleCurrentMonitor() {
     Serial.println(" A");
     
     // OLED 출력 (전류값만 업데이트)
-    if (now - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
-      updateDisplayCurrent(emaCurrent, peakCurrent);
+    if (now - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {      
+      updateDisplayCurrent(emaCurrent);
       lastDisplayUpdate = now;
     }
   }
@@ -713,8 +715,7 @@ void loop() {
   checkSwitchInput();        // 스위치 입력 감지
   
   if (isConnected && !isDisconnecting) {
-    checkCANCommunication();  // CAN 통신 확인
-    
+    checkCANCommunication();  // CAN 통신 확인    
     // CAN이 연결되어 있고, 명령이 전송되지 않았으며, 강제 중지 상태가 아닐 때만 명령 전송
     if (isCanConnected && !commandsSent && !forceStopActivated) {
       sendExtDevTestCommands();
