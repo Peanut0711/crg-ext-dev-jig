@@ -107,7 +107,7 @@ enum TestState
 TestState currentState = READY; // 현재 검사 상태
 
 // 명령 상태 정의
-enum CommandState
+enum CommandStateEnum
 {
   CMD_IDLE,         // 대기 상태
   CMD_RMC_ON,       // RMC ON 명령 전송
@@ -123,63 +123,78 @@ enum CommandState
 };
 
 // 시스템 상태 구조체
-struct SystemState
-{
-  // 연결 상태
-  bool isConnected = false;        // 제품 연결 상태
-  bool lastState = false;          // 이전 상태
-  bool isCanConnected = false;     // CAN 통신 연결 상태
-  bool commandsSent = false;       // CAN 명령 전송 완료 여부
-  bool isDisconnecting = false;    // 연결 해제 진행 중 여부
-  bool forceStopActivated = false; // 강제 중지 활성화 여부
+struct SystemState {
+    // 연결 상태 관리
+    struct ConnectionState {
+        bool isConnected = false;        // 제품 연결 상태
+        bool lastState = false;          // 이전 상태
+        bool isCanConnected = false;     // CAN 통신 연결 상태
+        bool isDisconnecting = false;    // 연결 해제 진행 중 여부
+        bool forceStopActivated = false; // 강제 중지 활성화 여부
+        unsigned long lastDebounceTime = 0;   // 마지막 디바운싱 시간
+        unsigned long disconnectTime = 0;     // 연결 해제 시간 저장
+    } connection;
 
-  // 타이밍 관련
-  unsigned long lastDebounceTime = 0;   // 마지막 디바운싱 시간
-  unsigned long lastCanCheckTime = 0;   // 마지막 CAN 체크 시간
-  unsigned long lastCmdTime = 0;        // 마지막 명령 전송 시간
-  unsigned long previousMillis = 0;     // 마지막 상태 변경 시간
-  unsigned long rly5vDelay = 0;         // 5V 릴레이 제어 지연 시간
-  unsigned long rly24vDelay = 0;        // 24V 릴레이 제어 지연 시간
-  unsigned long readyStateDelay = 0;    // READY 상태로 전환하기 위한 지연 시간
-  unsigned long disconnectTime = 0;     // 연결 해제 시간 저장
-  unsigned long lastDisplayUpdate = 0;  // 마지막 디스플레이 업데이트 시간
-  unsigned long lastSwitchScanTime = 0; // 마지막 스위치 스캔 시간
-  unsigned long lastLedBlinkTime = 0;   // 마지막 LED 점멸 시간
-  unsigned long canTimeoutStart = 0;    // CAN 타임아웃 시작 시간
+    // 릴레이 상태 관리
+    struct RelayState {
+        bool rly5vState = false;  // 5V 릴레이 상태
+        bool rly24vState = false; // 24V 릴레이 상태
+        unsigned long rly5vDelay = 0;         // 5V 릴레이 제어 지연 시간
+        unsigned long rly24vDelay = 0;        // 24V 릴레이 제어 지연 시간
+    } relay;
 
-  // 릴레이 상태
-  bool rly5vState = false;  // 5V 릴레이 상태
-  bool rly24vState = false; // 24V 릴레이 상태
+    // 타이밍 관리
+    struct TimingState {
+        unsigned long lastCanCheckTime = 0;   // 마지막 CAN 체크 시간
+        unsigned long lastCmdTime = 0;        // 마지막 명령 전송 시간
+        unsigned long previousMillis = 0;     // 마지막 상태 변경 시간
+        unsigned long readyStateDelay = 0;    // READY 상태로 전환하기 위한 지연 시간
+        unsigned long lastDisplayUpdate = 0;  // 마지막 디스플레이 업데이트 시간
+        unsigned long lastSwitchScanTime = 0; // 마지막 스위치 스캔 시간
+        unsigned long lastLedBlinkTime = 0;   // 마지막 LED 점멸 시간
+        unsigned long canTimeoutStart = 0;    // CAN 타임아웃 시작 시간
+    } timing;
 
-  // 스위치 상태
-  bool lastSwitchState = HIGH;         // 이전 스위치 상태
-  bool currentSwitchState = HIGH;      // 현재 스위치 상태
-  int switchStateCount = 0;            // 상태 카운트
-  bool isSwitchPressed = false;        // 스위치 눌림 상태
-  bool lastStartSwitchState = HIGH;    // 이전 START 스위치 상태
-  bool currentStartSwitchState = HIGH; // 현재 START 스위치 상태
-  int startSwitchStateCount = 0;       // START 스위치 상태 카운트
-  bool isStartSwitchPressed = false;   // START 스위치 눌림 상태
+    // 스위치 상태 관리
+    struct SwitchState {
+        bool lastSwitchState = HIGH;         // 이전 스위치 상태
+        bool currentSwitchState = HIGH;      // 현재 스위치 상태
+        int switchStateCount = 0;            // 상태 카운트
+        bool isSwitchPressed = false;        // 스위치 눌림 상태
+        bool lastStartSwitchState = HIGH;    // 이전 START 스위치 상태
+        bool currentStartSwitchState = HIGH; // 현재 START 스위치 상태
+        int startSwitchStateCount = 0;       // START 스위치 상태 카운트
+        bool isStartSwitchPressed = false;   // START 스위치 눌림 상태
+    } switchState;
 
-  // CAN 통신 상태
-  bool canError = false;        // CAN 에러 상태
-  bool canCheckStarted = false; // CAN 체크 시작 여부
+    // CAN 통신 상태 관리
+    struct CanState {
+        bool canError = false;        // CAN 에러 상태
+        bool canCheckStarted = false; // CAN 체크 시작 여부
+        bool commandsSent = false;    // CAN 명령 전송 완료 여부
+    } can;
 
-  // 전류 모니터링 상태
-  bool currentMonitorActive = false;      // 전류 모니터링 활성화 상태
-  unsigned long lastCurrentPrintTime = 0; // 마지막 전류 출력 시간
-  float peakCurrent = 0.0;                // 피크 전류값 저장
-  unsigned long lastPeakResetTime = 0;    // 피크값 마지막 초기화 시간
-  bool justReset = false;                 // 피크값이 방금 초기화되었는지 표시
-  float emaCurrent = 0.0;                 // EMA 처리된 전류값
-  bool isFirstEma = true;                 // 최초 EMA 계산 여부
+    // 전류 모니터링 상태 관리
+    struct CurrentMonitorState {
+        bool currentMonitorActive = false;      // 전류 모니터링 활성화 상태
+        unsigned long lastCurrentPrintTime = 0; // 마지막 전류 출력 시간
+        float peakCurrent = 0.0;                // 피크 전류값 저장
+        unsigned long lastPeakResetTime = 0;    // 피크값 마지막 초기화 시간
+        bool justReset = false;                 // 피크값이 방금 초기화되었는지 표시
+        float emaCurrent = 0.0;                 // EMA 처리된 전류값
+        bool isFirstEma = true;                 // 최초 EMA 계산 여부
+    } currentMonitor;
 
-  // 디스플레이 상태
-  bool stateChanged = false; // 상태 변경 플래그
+    // 디스플레이 상태 관리
+    struct DisplayState {
+        bool stateChanged = false; // 상태 변경 플래그
+    } display;
 
-  // 명령 상태 관련
-  CommandState cmdState = CMD_IDLE; // 현재 명령 상태
-  unsigned long cmdStartTime = 0;   // 명령 시작 시간
+    // 명령 상태 관리
+    struct CommandState {
+        CommandStateEnum cmdState = CMD_IDLE; // 현재 명령 상태
+        unsigned long cmdStartTime = 0;   // 명령 시작 시간
+    } command;
 };
 
 // 전역 상태 인스턴스
@@ -198,62 +213,62 @@ void checkCANCommunication();
 void handleCurrentMonitor()
 {
   // 연결이 해제되었거나 연결 해제 중이면 전류 모니터링 중지
-  if (!sysState.isConnected || sysState.isDisconnecting)
+  if (!sysState.connection.isConnected || sysState.connection.isDisconnecting)
   {
-    sysState.currentMonitorActive = false;
+    sysState.currentMonitor.currentMonitorActive = false;
     return;
   }
 
-  if (!sysState.currentMonitorActive)
+  if (!sysState.currentMonitor.currentMonitorActive)
     return;
   unsigned long now = millis();
 
   // 3초마다 피크값 초기화
-  if (now - sysState.lastPeakResetTime >= hwConfig.timing.peakResetTime)
+  if (now - sysState.currentMonitor.lastPeakResetTime >= hwConfig.timing.peakResetTime)
   {
-    sysState.peakCurrent = 0.0;
-    sysState.lastPeakResetTime = now;
-    sysState.justReset = true; // 초기화 순간 표시
+    sysState.currentMonitor.peakCurrent = 0.0;
+    sysState.currentMonitor.lastPeakResetTime = now;
+    sysState.currentMonitor.justReset = true; // 초기화 순간 표시
   }
 
-  if (now - sysState.lastCurrentPrintTime >= hwConfig.timing.currentPrintTime)
+  if (now - sysState.currentMonitor.lastCurrentPrintTime >= hwConfig.timing.currentPrintTime)
   {
-    sysState.lastCurrentPrintTime = now;
+    sysState.currentMonitor.lastCurrentPrintTime = now;
     float current_mA = ina226.getCurrent_mA();
     float current_A = current_mA / 1000.0;
 
     // EMA 계산
-    if (sysState.isFirstEma)
+    if (sysState.currentMonitor.isFirstEma)
     {
-      sysState.emaCurrent = current_A; // 최초 실행시 현재값으로 초기화
-      sysState.isFirstEma = false;
+      sysState.currentMonitor.emaCurrent = current_A; // 최초 실행시 현재값으로 초기화
+      sysState.currentMonitor.isFirstEma = false;
     }
     else
     {
-      sysState.emaCurrent = 0.1 * current_A + 0.9 * sysState.emaCurrent; // EMA 계산
+      sysState.currentMonitor.emaCurrent = 0.1 * current_A + 0.9 * sysState.currentMonitor.emaCurrent; // EMA 계산
     }
 
     // 피크값 업데이트
-    if (sysState.emaCurrent > sysState.peakCurrent)
+    if (sysState.currentMonitor.emaCurrent > sysState.currentMonitor.peakCurrent)
     {
-      sysState.peakCurrent = sysState.emaCurrent;
-      sysState.justReset = false; // 새로운 피크값이 생기면 초기화 표시 해제
+      sysState.currentMonitor.peakCurrent = sysState.currentMonitor.emaCurrent;
+      sysState.currentMonitor.justReset = false; // 새로운 피크값이 생기면 초기화 표시 해제
     }
 
     // 시리얼 출력
     Serial.print("[INA226] Instant Current: ");
     Serial.print(current_A, 2);
     Serial.print(" A    |    EMA Current: ");
-    Serial.print(sysState.emaCurrent, 2);
+    Serial.print(sysState.currentMonitor.emaCurrent, 2);
     Serial.print(" A    |    Peak: ");
-    Serial.print(sysState.justReset ? "-.-" : String(sysState.peakCurrent, 1));
+    Serial.print(sysState.currentMonitor.justReset ? "-.-" : String(sysState.currentMonitor.peakCurrent, 1));
     Serial.println(" A");
 
     // OLED 출력 (전류값만 업데이트)
-    if (now - sysState.lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL)
+    if (now - sysState.timing.lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL)
     {
-      updateDisplayCurrent(sysState.emaCurrent);
-      sysState.lastDisplayUpdate = now;
+      updateDisplayCurrent(sysState.currentMonitor.emaCurrent);
+      sysState.timing.lastDisplayUpdate = now;
     }
   }
 }
@@ -272,12 +287,12 @@ void handleLEDControl()
   unsigned long currentMillis = millis();
 
   // 에러 상태 체크
-  if (sysState.canError)
+  if (sysState.can.canError)
   {
     // 에러 상태: 두 LED 모두 점멸
-    if (currentMillis - sysState.lastLedBlinkTime >= hwConfig.timing.ledBlinkInterval)
+    if (currentMillis - sysState.timing.lastLedBlinkTime >= hwConfig.timing.ledBlinkInterval)
     {
-      sysState.lastLedBlinkTime = currentMillis;
+      sysState.timing.lastLedBlinkTime = currentMillis;
       ledState = !ledState;
       setLEDState(ledState, ledState);
     }
@@ -291,9 +306,9 @@ void handleLEDControl()
   case PAUSE:
   case DISCON:
     // START LED 점멸, STOP LED 꺼짐
-    if (currentMillis - sysState.lastLedBlinkTime >= hwConfig.timing.ledBlinkInterval)
+    if (currentMillis - sysState.timing.lastLedBlinkTime >= hwConfig.timing.ledBlinkInterval)
     {
-      sysState.lastLedBlinkTime = currentMillis;
+      sysState.timing.lastLedBlinkTime = currentMillis;
       ledState = !ledState;
       setLEDState(ledState, false);
     }
@@ -303,9 +318,9 @@ void handleLEDControl()
   case LED_TEST:
   case VIB_TEST:
     // START LED 꺼짐, STOP LED 점멸
-    if (currentMillis - sysState.lastLedBlinkTime >= hwConfig.timing.ledBlinkInterval)
+    if (currentMillis - sysState.timing.lastLedBlinkTime >= hwConfig.timing.ledBlinkInterval)
     {
-      sysState.lastLedBlinkTime = currentMillis;
+      sysState.timing.lastLedBlinkTime = currentMillis;
       ledState = !ledState;
       setLEDState(false, ledState);
     }
@@ -336,7 +351,7 @@ void updateDisplayCurrent(float current)
 // OLED 상태 표시 함수 (상태만 표시)
 void updateDisplayState()
 {
-  if (!sysState.stateChanged)
+  if (!sysState.display.stateChanged)
     return;
 
   display.fillRect(0, 0, hwConfig.display.width, 16, SSD1306_BLACK);
@@ -344,7 +359,7 @@ void updateDisplayState()
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
 
-  if (sysState.canError)
+  if (sysState.can.canError)
   {
     display.println("CAN ERROR");
   }
@@ -379,7 +394,7 @@ void updateDisplayState()
     }
   }
   display.display();
-  sysState.stateChanged = false;
+  sysState.display.stateChanged = false;
 }
 
 // 전압 측정 및 연결 상태 확인
@@ -394,30 +409,30 @@ void checkConnectionStatus()
   unsigned long currentMillis = millis();
 
   // 디바운싱 처리
-  if (currentConnectionState != sysState.lastState)
+  if (currentConnectionState != sysState.connection.lastState)
   {
-    sysState.lastDebounceTime = currentMillis;
+    sysState.connection.lastDebounceTime = currentMillis;
   }
 
   // 디바운싱 시간이 지났고, 상태가 변경되었을 때만 처리
-  if ((currentMillis - sysState.lastDebounceTime) > hwConfig.connection.debounceDelay)
+  if ((currentMillis - sysState.connection.lastDebounceTime) > hwConfig.connection.debounceDelay)
   {
-    if (currentConnectionState != sysState.isConnected)
+    if (currentConnectionState != sysState.connection.isConnected)
     {
-      sysState.isConnected = currentConnectionState;
+      sysState.connection.isConnected = currentConnectionState;
 
       // 강제 중지 후 재연결 시 처리
-      if (sysState.isConnected && sysState.forceStopActivated)
+      if (sysState.connection.isConnected && sysState.connection.forceStopActivated)
       {
         Serial.println("강제 중지 후 재연결됨 - 검사 재시작 가능");
-        sysState.forceStopActivated = false; // 강제 중지 상태 해제
+        sysState.connection.forceStopActivated = false; // 강제 중지 상태 해제
       }
 
       handleStateChange(voltage, swStopState);
     }
   }
 
-  sysState.lastState = currentConnectionState;
+  sysState.connection.lastState = currentConnectionState;
 }
 
 // 상태 변경 처리
@@ -425,31 +440,32 @@ void handleStateChange(float voltage, bool swStopState)
 {
   unsigned long currentMillis = millis();
 
-  if (!sysState.isConnected || swStopState)
+  if (!sysState.connection.isConnected || swStopState)
   {
     // 연결 해제 또는 스톱 스위치 감지
-    if (!sysState.isDisconnecting)
+    if (!sysState.connection.isDisconnecting)
     {
-      sysState.isDisconnecting = true;
-      sysState.previousMillis = currentMillis;
-      sysState.rly24vDelay = currentMillis + 500; // 500ms 이후 24V 릴레이와 5V릴레이 모두 OFF
-      sysState.rly5vDelay = currentMillis + 500;
+      sysState.connection.isDisconnecting = true;
+      sysState.timing.previousMillis = currentMillis;
+      sysState.relay.rly24vDelay = currentMillis + 500; // 500ms 이후 24V 릴레이와 5V릴레이 모두 OFF
+      sysState.relay.rly5vDelay = currentMillis + 500;
 
       // PAUSE 상태일 때도 READY로 변경
       currentState = READY;
 
-      sysState.disconnectTime = currentMillis; // 연결 해제 시간 저장
-      sysState.stateChanged = true;            // 상태 변경 플래그 설정
+      sysState.connection.disconnectTime = currentMillis; // 연결 해제 시간 저장
+      sysState.display.stateChanged = true;            // 상태 변경 플래그 설정
 
       // 연결 해제 시 CAN 관련 모든 상태 초기화
-      sysState.canError = false;
-      sysState.isCanConnected = false;
-      sysState.canCheckStarted = false;
-      sysState.canTimeoutStart = 0;
-      sysState.lastCanCheckTime = 0;
-      sysState.cmdState = CMD_IDLE;
-      sysState.commandsSent = false;
-      sysState.forceStopActivated = false; // 강제 중지 상태도 해제
+      sysState.can.canError = false;
+      sysState.connection.isCanConnected = false;
+      sysState.can.commandsSent = false;
+      sysState.can.canCheckStarted = false;
+      sysState.timing.canTimeoutStart = 0;
+      sysState.timing.lastCanCheckTime = 0;
+      sysState.command.cmdState = CMD_IDLE;
+      sysState.can.commandsSent = false;
+      sysState.connection.forceStopActivated = false; // 강제 중지 상태도 해제
 
       updateDisplayState();
       Serial.println("CAN 관련 상태 초기화 완료");
@@ -459,16 +475,16 @@ void handleStateChange(float voltage, bool swStopState)
   {
     // 연결 감지
     // 강제 중지 상태일 때는 연결을 무시
-    if (sysState.forceStopActivated)
+    if (sysState.connection.forceStopActivated)
     {
       Serial.println("강제 중지 상태입니다. START 스위치를 눌러 재시작하거나, 장치를 분리했다가 다시 연결해주세요.");
       return;
     }
 
-    sysState.isDisconnecting = false;
-    sysState.previousMillis = currentMillis;
-    sysState.rly24vDelay = currentMillis + 500; // 24V 릴레이 먼저 HIGH
-    sysState.rly5vDelay = currentMillis + 1000; // 0.5초 후 5V 릴레이 HIGH
+    sysState.connection.isDisconnecting = false;
+    sysState.timing.previousMillis = currentMillis;
+    sysState.relay.rly24vDelay = currentMillis + 500; // 24V 릴레이 먼저 HIGH
+    sysState.relay.rly5vDelay = currentMillis + 1000; // 0.5초 후 5V 릴레이 HIGH
 
     // PAUSE 상태일 때는 START로 변경하지 않음
     if (currentState != PAUSE)
@@ -476,13 +492,13 @@ void handleStateChange(float voltage, bool swStopState)
       currentState = START;
     }
 
-    sysState.stateChanged = true; // 상태 변경 플래그 설정
+    sysState.display.stateChanged = true; // 상태 변경 플래그 설정
     updateDisplayState();
   }
 
   // 상태 변경 메시지 출력
   Serial.print("상태 변경: ");
-  Serial.print(sysState.isConnected ? "연결 됨" : "연결 해제");
+  Serial.print(sysState.connection.isConnected ? "연결 됨" : "연결 해제");
   Serial.print(" (전압: ");
   Serial.print(voltage);
   Serial.println("V)");
@@ -492,18 +508,18 @@ void handleStateChange(float voltage, bool swStopState)
 void handleRelayControl()
 {
   // 강제 중지 상태일 때는 릴레이 제어를 하지 않음
-  if (sysState.forceStopActivated)
+  if (sysState.connection.forceStopActivated)
   {
     return;
   }
 
   unsigned long currentMillis = millis();
 
-  if (sysState.isConnected && !sysState.isDisconnecting)
+  if (sysState.connection.isConnected && !sysState.connection.isDisconnecting)
   {
     handleConnectedState(currentMillis);
   }
-  else if (sysState.isDisconnecting)
+  else if (sysState.connection.isDisconnecting)
   {
     handleDisconnectingState(currentMillis);
   }
@@ -513,26 +529,26 @@ void handleRelayControl()
 void handleConnectedState(unsigned long currentMillis)
 {
   // CAN 에러 상태면 릴레이 제어 중단
-  if (sysState.canError)
+  if (sysState.can.canError)
   {
     return;
   }
 
-  if (currentMillis >= sysState.rly24vDelay && !sysState.rly24vState)
+  if (currentMillis >= sysState.relay.rly24vDelay && !sysState.relay.rly24vState)
   {
     digitalWrite(hwConfig.pins.relay24v, HIGH);
-    sysState.rly24vState = true;
+    sysState.relay.rly24vState = true;
     Serial.println("24V 릴레이 ON");
   }
-  if (currentMillis >= sysState.rly5vDelay && !sysState.rly5vState)
+  if (currentMillis >= sysState.relay.rly5vDelay && !sysState.relay.rly5vState)
   {
     digitalWrite(hwConfig.pins.relay5v, HIGH);
-    sysState.rly5vState = true;
+    sysState.relay.rly5vState = true;
     Serial.println("5V 릴레이 ON");
     // 5V 인가 후 500ms 대기 후 CAN 통신 시작
-    sysState.lastCanCheckTime = currentMillis + hwConfig.can.timeoutMs; // 1.5초 후 CAN 체크 시작
-    sysState.canTimeoutStart = currentMillis + hwConfig.can.timeoutMs;  // 1.5초 후 타임아웃 체크
-    sysState.canCheckStarted = false;                                   // CAN 체크 시작 플래그 초기화
+    sysState.timing.lastCanCheckTime = currentMillis + hwConfig.can.timeoutMs; // 1.5초 후 CAN 체크 시작
+    sysState.timing.canTimeoutStart = currentMillis + hwConfig.can.timeoutMs;  // 1.5초 후 타임아웃 체크
+    sysState.can.canCheckStarted = false;                                   // CAN 체크 시작 플래그 초기화
     Serial.println("CAN 통신 대기 중... (1.5초)");
   }
 }
@@ -540,50 +556,41 @@ void handleConnectedState(unsigned long currentMillis)
 // 연결해제 시 릴레이 제어
 void handleDisconnectingState(unsigned long currentMillis)
 {
-  if (currentMillis >= sysState.rly24vDelay && sysState.rly24vState)
+  if (currentMillis >= sysState.relay.rly24vDelay && sysState.relay.rly24vState)
   {
     digitalWrite(hwConfig.pins.relay24v, LOW);
-    sysState.rly24vState = false;
+    sysState.relay.rly24vState = false;
     Serial.println("24V 릴레이 OFF");
   }
-  if (currentMillis >= sysState.rly5vDelay && sysState.rly5vState)
+  if (currentMillis >= sysState.relay.rly5vDelay && sysState.relay.rly5vState)
   {
     digitalWrite(hwConfig.pins.relay5v, LOW);
-    sysState.rly5vState = false;
-    sysState.isDisconnecting = false;
+    sysState.relay.rly5vState = false;
+    sysState.connection.isDisconnecting = false;
     // CAN 관련 상태 초기화
-    sysState.isCanConnected = false;
-    sysState.commandsSent = false;
-    sysState.currentMonitorActive = false;
+    sysState.connection.isCanConnected = false;
+    sysState.can.commandsSent = false;
+    sysState.currentMonitor.currentMonitorActive = false;
     Serial.println("CAN 통신 상태 및 전류 모니터링 초기화 완료");
 
     // READY 상태로 전환하기 위한 타이머 설정
-    sysState.readyStateDelay = currentMillis + 2000;
+    sysState.timing.readyStateDelay = currentMillis + 2000;
   }
-
-  // READY 상태로 전환
-  // if (currentState == DISCON && currentMillis >= readyStateDelay) {
-  //   Serial.println("연결 해제 후 2초 뒤 READY 상태로 변경");
-  //   currentState = READY;
-  //   stateChanged = true;
-  //   updateDisplayState();
-  //   readyStateDelay = 0;  // 타이머 초기화
-  // }
 }
 
 // 장비 제어 명령 전송
 void sendExtDevTestCommands()
 {
-  if (sysState.commandsSent || sysState.canError)
+  if (sysState.can.commandsSent || sysState.can.canError)
     return; // CAN 에러 상태면 명령 전송 중단
 
   unsigned long currentMillis = millis();
 
-  switch (sysState.cmdState)
+  switch (sysState.command.cmdState)
   {
   case CMD_IDLE:
     Serial.println("\n=== 장비 제어 명령 전송 시작 ===");
-    sysState.cmdState = CMD_RMC_ON;
+    sysState.command.cmdState = CMD_RMC_ON;
     break;
 
   case CMD_RMC_ON:
@@ -591,69 +598,69 @@ void sendExtDevTestCommands()
     if (sendCanMessage(hwConfig.can.rmcId, 0, 1, 2))
     {
       Serial.println("   RMC ON 명령 전송 완료");
-      sysState.cmdStartTime = currentMillis;
-      sysState.cmdState = CMD_LED_MODE;
+      sysState.command.cmdStartTime = currentMillis;
+      sysState.command.cmdState = CMD_LED_MODE;
     }
     else
     {
       Serial.println("   RMC ON 명령 전송 실패");
-      sysState.canError = true;
+      sysState.can.canError = true;
       currentState = READY;
-      sysState.stateChanged = true;
+      sysState.display.stateChanged = true;
       updateDisplayState();
     }
     break;
 
   case CMD_LED_MODE:
-    if (currentMillis - sysState.cmdStartTime >= CMD_DELAY_1_MS)
+    if (currentMillis - sysState.command.cmdStartTime >= CMD_DELAY_1_MS)
     {
       Serial.println("2. LED 검사 모드 설정 중...");
       if (sendCanMessage(hwConfig.can.rmcId, 6, 22, 4))
       {
         Serial.println("   LED 검사 모드 설정 완료");
-        sysState.cmdStartTime = currentMillis;
-        sysState.cmdState = CMD_LED_START;
+        sysState.command.cmdStartTime = currentMillis;
+        sysState.command.cmdState = CMD_LED_START;
       }
       else
       {
         Serial.println("   LED 검사 모드 설정 실패");
-        sysState.canError = true;
+        sysState.can.canError = true;
         currentState = READY;
-        sysState.stateChanged = true;
+        sysState.display.stateChanged = true;
         updateDisplayState();
       }
     }
     break;
 
   case CMD_LED_START:
-    if (currentMillis - sysState.cmdStartTime >= CMD_DELAY_1_MS)
+    if (currentMillis - sysState.command.cmdStartTime >= CMD_DELAY_1_MS)
     {
       Serial.println("3. LED 검사 시작...");
       if (sendCanMessage(hwConfig.can.rmcId, 6, 21, 1))
       {
         Serial.println("   LED 검사 시작 완료");
         currentState = LED_TEST;
-        sysState.stateChanged = true;
+        sysState.display.stateChanged = true;
         updateDisplayState();
         Serial.println("   LED 동작 확인 중... (3초)");
-        sysState.cmdStartTime = currentMillis;
-        sysState.cmdState = CMD_LED_WAIT;
+        sysState.command.cmdStartTime = currentMillis;
+        sysState.command.cmdState = CMD_LED_WAIT;
       }
       else
       {
         Serial.println("   LED 검사 시작 실패");
-        sysState.canError = true;
+        sysState.can.canError = true;
         currentState = READY;
-        sysState.stateChanged = true;
+        sysState.display.stateChanged = true;
         updateDisplayState();
       }
     }
     break;
 
   case CMD_LED_WAIT:
-    if (currentMillis - sysState.cmdStartTime >= LED_CHECK_MS)
+    if (currentMillis - sysState.command.cmdStartTime >= LED_CHECK_MS)
     {
-      sysState.cmdState = CMD_LED_PAUSE;
+      sysState.command.cmdState = CMD_LED_PAUSE;
     }
     break;
 
@@ -662,105 +669,105 @@ void sendExtDevTestCommands()
     if (sendCanMessage(hwConfig.can.rmcId, 6, 21, 2))
     {
       Serial.println("   LED 검사 일시정지 완료");
-      sysState.cmdStartTime = currentMillis;
-      sysState.cmdState = CMD_VIB_MODE;
+      sysState.command.cmdStartTime = currentMillis;
+      sysState.command.cmdState = CMD_VIB_MODE;
     }
     else
     {
       Serial.println("   LED 검사 일시정지 실패");
-      sysState.canError = true;
+      sysState.can.canError = true;
       currentState = READY;
-      sysState.stateChanged = true;
+      sysState.display.stateChanged = true;
       updateDisplayState();
     }
     break;
 
   case CMD_VIB_MODE:
-    if (currentMillis - sysState.cmdStartTime >= CMD_DELAY_1_MS)
+    if (currentMillis - sysState.command.cmdStartTime >= CMD_DELAY_1_MS)
     {
       Serial.println("5. 진동 검사 모드 설정 중...");
       if (sendCanMessage(hwConfig.can.rmcId, 6, 22, 1))
       {
         Serial.println("   진동 검사 모드 설정 완료");
-        sysState.cmdStartTime = currentMillis;
-        sysState.cmdState = CMD_TEMP_SET;
+        sysState.command.cmdStartTime = currentMillis;
+        sysState.command.cmdState = CMD_TEMP_SET;
       }
       else
       {
         Serial.println("   진동 검사 모드 설정 실패");
-        sysState.canError = true;
+        sysState.can.canError = true;
         currentState = READY;
-        sysState.stateChanged = true;
+        sysState.display.stateChanged = true;
         updateDisplayState();
       }
     }
     break;
 
   case CMD_TEMP_SET:
-    if (currentMillis - sysState.cmdStartTime >= CMD_DELAY_1_MS)
+    if (currentMillis - sysState.command.cmdStartTime >= CMD_DELAY_1_MS)
     {
       Serial.println("6. 온도 설정 중...");
       if (sendCanMessage(hwConfig.can.rmcId, 6, 28, 450))
       {
         Serial.println("   온도 설정 완료");
-        sysState.cmdStartTime = currentMillis;
-        sysState.cmdState = CMD_STRENGTH_SET;
+        sysState.command.cmdStartTime = currentMillis;
+        sysState.command.cmdState = CMD_STRENGTH_SET;
       }
       else
       {
         Serial.println("   온도 설정 실패");
-        sysState.canError = true;
+        sysState.can.canError = true;
         currentState = READY;
-        sysState.stateChanged = true;
+        sysState.display.stateChanged = true;
         updateDisplayState();
       }
     }
     break;
 
   case CMD_STRENGTH_SET:
-    if (currentMillis - sysState.cmdStartTime >= CMD_DELAY_1_MS)
+    if (currentMillis - sysState.command.cmdStartTime >= CMD_DELAY_1_MS)
     {
       Serial.println("7. 마사지 강도 설정 중...");
       if (sendCanMessage(hwConfig.can.rmcId, 6, 23, 3))
       {
         Serial.println("   마사지 강도 설정 완료");
-        sysState.cmdStartTime = currentMillis;
-        sysState.cmdState = CMD_VIB_START;
+        sysState.command.cmdStartTime = currentMillis;
+        sysState.command.cmdState = CMD_VIB_START;
       }
       else
       {
         Serial.println("   마사지 강도 설정 실패");
-        sysState.canError = true;
+        sysState.can.canError = true;
         currentState = READY;
-        sysState.stateChanged = true;
+        sysState.display.stateChanged = true;
         updateDisplayState();
       }
     }
     break;
 
   case CMD_VIB_START:
-    if (currentMillis - sysState.cmdStartTime >= CMD_DELAY_2_MS)
+    if (currentMillis - sysState.command.cmdStartTime >= CMD_DELAY_2_MS)
     {
       Serial.println("8. 진동 검사 시작...");
       if (sendCanMessage(hwConfig.can.rmcId, 6, 21, 1))
       {
         Serial.println("   진동 검사 시작 완료");
         currentState = VIB_TEST;
-        sysState.stateChanged = true;
+        sysState.display.stateChanged = true;
         updateDisplayState();
-        sysState.commandsSent = true;
-        sysState.currentMonitorActive = true;
-        sysState.lastCurrentPrintTime = currentMillis;
+        sysState.can.commandsSent = true;
+        sysState.currentMonitor.currentMonitorActive = true;
+        sysState.currentMonitor.lastCurrentPrintTime = currentMillis;
         Serial.println("전류 모니터링 시작");
         Serial.println("=== 장비 제어 명령 전송 완료 ===\n");
-        sysState.cmdState = CMD_COMPLETE;
+        sysState.command.cmdState = CMD_COMPLETE;
       }
       else
       {
         Serial.println("   진동 검사 시작 실패");
-        sysState.canError = true;
+        sysState.can.canError = true;
         currentState = READY;
-        sysState.stateChanged = true;
+        sysState.display.stateChanged = true;
         updateDisplayState();
       }
     }
@@ -807,9 +814,9 @@ void checkSwitchInput()
   unsigned long currentMillis = millis();
 
   // 스캔 주기 확인
-  if (currentMillis - sysState.lastSwitchScanTime >= SWITCH_SCAN_INTERVAL)
+  if (currentMillis - sysState.timing.lastSwitchScanTime >= SWITCH_SCAN_INTERVAL)
   {
-    sysState.lastSwitchScanTime = currentMillis;
+    sysState.timing.lastSwitchScanTime = currentMillis;
 
     // STOP 스위치 처리
     handleStopSwitch();
@@ -823,27 +830,27 @@ void checkSwitchInput()
 void handleStopSwitch()
 {
   // 현재 스위치 상태 읽기
-  sysState.currentSwitchState = digitalRead(hwConfig.pins.swStop);
+  sysState.switchState.currentSwitchState = digitalRead(hwConfig.pins.swStop);
 
   // 상태가 변경되었는지 확인
-  if (sysState.currentSwitchState != sysState.lastSwitchState)
+  if (sysState.switchState.currentSwitchState != sysState.switchState.lastSwitchState)
   {
-    sysState.switchStateCount = 1; // 카운트 초기화
+    sysState.switchState.switchStateCount = 1; // 카운트 초기화
   }
   else
   {
-    sysState.switchStateCount++; // 카운트 증가
+    sysState.switchState.switchStateCount++; // 카운트 증가
   }
 
   // 디바운스 카운트 확인
-  if (sysState.switchStateCount >= SWITCH_DEBOUNCE_COUNT)
+  if (sysState.switchState.switchStateCount >= SWITCH_DEBOUNCE_COUNT)
   {
-    if (sysState.currentSwitchState != sysState.isSwitchPressed)
+    if (sysState.switchState.currentSwitchState != sysState.switchState.isSwitchPressed)
     {
-      sysState.isSwitchPressed = sysState.currentSwitchState;
+      sysState.switchState.isSwitchPressed = sysState.switchState.currentSwitchState;
 
       // 스위치 상태 변경 시 처리
-      if (sysState.isSwitchPressed)
+      if (sysState.switchState.isSwitchPressed)
       {
         Serial.println("STOP 스위치 해제됨");
       }
@@ -859,20 +866,20 @@ void handleStopSwitch()
           // 릴레이 즉시 차단
           digitalWrite(hwConfig.pins.relay24v, LOW);
           digitalWrite(hwConfig.pins.relay5v, LOW);
-          sysState.rly24vState = false;
-          sysState.rly5vState = false;
+          sysState.relay.rly24vState = false;
+          sysState.relay.rly5vState = false;
           Serial.println("24V 릴레이 OFF");
           Serial.println("5V 릴레이 OFF");
 
           // 상태를 PAUSE로 변경
           currentState = PAUSE;
-          sysState.stateChanged = true;
-          sysState.isCanConnected = false;
-          sysState.commandsSent = false;
-          sysState.currentMonitorActive = false;
+          sysState.display.stateChanged = true;
+          sysState.connection.isCanConnected = false;
+          sysState.can.commandsSent = false;
+          sysState.currentMonitor.currentMonitorActive = false;
 
           // 강제 중지 상태 활성화
-          sysState.forceStopActivated = true;
+          sysState.connection.forceStopActivated = true;
 
           // 디스플레이 업데이트
           updateDisplayState();
@@ -883,34 +890,34 @@ void handleStopSwitch()
     }
   }
 
-  sysState.lastSwitchState = sysState.currentSwitchState;
+  sysState.switchState.lastSwitchState = sysState.switchState.currentSwitchState;
 }
 
 // START 스위치 처리 함수
 void handleStartSwitch()
 {
   // 현재 스위치 상태 읽기
-  sysState.currentStartSwitchState = digitalRead(hwConfig.pins.swStart);
+  sysState.switchState.currentStartSwitchState = digitalRead(hwConfig.pins.swStart);
 
   // 상태가 변경되었는지 확인
-  if (sysState.currentStartSwitchState != sysState.lastStartSwitchState)
+  if (sysState.switchState.currentStartSwitchState != sysState.switchState.lastStartSwitchState)
   {
-    sysState.startSwitchStateCount = 1; // 카운트 초기화
+    sysState.switchState.startSwitchStateCount = 1; // 카운트 초기화
   }
   else
   {
-    sysState.startSwitchStateCount++; // 카운트 증가
+    sysState.switchState.startSwitchStateCount++; // 카운트 증가
   }
 
   // 디바운스 카운트 확인
-  if (sysState.startSwitchStateCount >= SWITCH_DEBOUNCE_COUNT)
+  if (sysState.switchState.startSwitchStateCount >= SWITCH_DEBOUNCE_COUNT)
   {
-    if (sysState.currentStartSwitchState != sysState.isStartSwitchPressed)
+    if (sysState.switchState.currentStartSwitchState != sysState.switchState.isStartSwitchPressed)
     {
-      sysState.isStartSwitchPressed = sysState.currentStartSwitchState;
+      sysState.switchState.isStartSwitchPressed = sysState.switchState.currentStartSwitchState;
 
       // 스위치 상태 변경 시 처리
-      if (sysState.isStartSwitchPressed)
+      if (sysState.switchState.isStartSwitchPressed)
       {
         Serial.println("START 스위치 해제됨");
       }
@@ -924,17 +931,17 @@ void handleStartSwitch()
           Serial.println("검사 재시작!");
 
           // 강제 중지 상태 해제
-          sysState.forceStopActivated = false;
+          sysState.connection.forceStopActivated = false;
 
           // 상태를 START로 변경하여 검사 재시작
           currentState = START;
-          sysState.stateChanged = true;
+          sysState.display.stateChanged = true;
 
           // 릴레이 제어 타이밍 설정
           unsigned long currentMillis = millis();
-          sysState.previousMillis = currentMillis;
-          sysState.rly24vDelay = currentMillis + 500; // 24V 릴레이 먼저 HIGH
-          sysState.rly5vDelay = currentMillis + 1000; // 0.5초 후 5V 릴레이 HIGH
+          sysState.timing.previousMillis = currentMillis;
+          sysState.relay.rly24vDelay = currentMillis + 500; // 24V 릴레이 먼저 HIGH
+          sysState.relay.rly5vDelay = currentMillis + 1000; // 0.5초 후 5V 릴레이 HIGH
 
           // 디스플레이 업데이트
           updateDisplayState();
@@ -945,7 +952,149 @@ void handleStartSwitch()
     }
   }
 
-  sysState.lastStartSwitchState = sysState.currentStartSwitchState;
+  sysState.switchState.lastStartSwitchState = sysState.switchState.currentStartSwitchState;
+}
+
+// CAN 메시지 전송 함수 구현
+bool sendCanMessage(uint32_t id, uint8_t bank, uint16_t number, uint32_t data)
+{
+  CANMessage message;
+  message.id = id;
+  message.len = 8; // 고정 길이 8바이트
+
+  // 데이터 패킹 (Big Endian)
+  message.data[0] = bank;            // Bank 번호
+  message.data[1] = 2;               // 고정값
+  message.data[2] = (number >> 8);   // Data ID (상위 바이트)
+  message.data[3] = (number & 0xFF); // Data ID (하위 바이트)
+  message.data[4] = (data >> 24);    // Data (최상위 바이트)
+  message.data[5] = (data >> 16);    // Data
+  message.data[6] = (data >> 8);     // Data
+  message.data[7] = (data & 0xFF);   // Data (최하위 바이트)
+
+  // 재전송 로직
+  for (int retry = 0; retry < hwConfig.can.retryCount; retry++)
+  {
+    if (ACAN_ESP32::can.tryToSend(message))
+    {
+      Serial.print("CAN 송신 성공 (시도 ");
+      Serial.print(retry + 1);
+      Serial.print("/");
+      Serial.print(hwConfig.can.retryCount);
+      Serial.println(")");
+      sysState.timing.canTimeoutStart = millis(); // CAN 메시지 전송 성공 시 타임아웃 시간 갱신
+      return true;
+    }
+
+    Serial.print("CAN 송신 실패 (시도 ");
+    Serial.print(retry + 1);
+    Serial.print("/");
+    Serial.print(hwConfig.can.retryCount);
+    Serial.println(")");
+
+    delay(hwConfig.can.retryDelay);
+  }
+
+  return false;
+}
+
+// CAN 통신 초기화 함수 구현
+void initCAN()
+{
+  ACAN_ESP32_Settings settings(hwConfig.can.speed);
+  settings.mRxPin = hwConfig.pins.canRx;
+  settings.mTxPin = hwConfig.pins.canTx;
+
+  const uint32_t errorCode = ACAN_ESP32::can.begin(settings);
+
+  if (errorCode == 0)
+  {
+    Serial.println("CAN 통신 초기화 완료");
+  }
+  else
+  {
+    Serial.print("CAN 통신 초기화 실패, 에러 코드: 0x");
+    Serial.println(errorCode, HEX);
+  }
+}
+
+// CAN 통신 모니터링 함수 구현
+void checkCANCommunication()
+{
+  // CAN 에러 상태면 체크 중단
+  if (sysState.can.canError)
+  {
+    return;
+  }
+
+  unsigned long currentMillis = millis();
+
+  // 5V 릴레이가 ON일 때만 처리
+  if (sysState.relay.rly5vState)
+  {
+    if (!sysState.can.canCheckStarted)
+    {
+      // 5V 릴레이 ON 후 500ms 대기
+      if (currentMillis - sysState.timing.lastCanCheckTime >= 500)
+      {
+        sysState.can.canCheckStarted = true;          // CAN 체크 시작
+        sysState.timing.canTimeoutStart = currentMillis; // 타임아웃 시작 시간 설정
+        Serial.println("CAN 통신 체크 시작 - 메시지 송신");
+
+        // CAN 메시지 송신
+        if (sendCanMessage(hwConfig.can.rmcId, 0, 1, 2))
+        {
+          Serial.println("CAN 메시지 송신 완료 - 응답 대기 중");
+        }
+        else
+        {
+          Serial.println("CAN 메시지 송신 실패");
+          sysState.can.canError = true;
+          currentState = READY;
+          sysState.display.stateChanged = true;
+          updateDisplayState();
+        }
+      }
+    }
+    else
+    {
+      CANMessage message;
+      if (ACAN_ESP32::can.receive(message))
+      {
+        if (!sysState.connection.isCanConnected)
+        { // CAN 연결이 처음 확인된 경우에만
+          sysState.connection.isCanConnected = true;
+          sysState.can.canError = false; // CAN 에러 상태 해제
+          Serial.println("CAN 통신 연결 확인 - 장비 제어 명령 전송 시작");
+
+          // 상태 머신 초기화
+          sysState.command.cmdState = CMD_IDLE;
+          sysState.can.commandsSent = false;
+        }
+        sysState.timing.canTimeoutStart = currentMillis; // CAN 메시지 수신 시 타임아웃 시작 시간 갱신
+      }
+      else
+      {
+        // CAN 메시지가 수신되지 않았고, 1.5초가 지났을 경우
+        if (currentMillis - sysState.timing.canTimeoutStart >= hwConfig.can.timeoutMs)
+        {
+          sysState.can.canError = true;
+          currentState = READY;         // READY 상태로 변경
+          sysState.display.stateChanged = true; // 상태 변경 플래그 설정
+          updateDisplayState();         // 디스플레이 업데이트
+          Serial.println("CAN 통신 타임아웃 - CAN 라인 점검 필요");
+
+          // 릴레이 차단
+          digitalWrite(hwConfig.pins.relay24v, LOW);
+          digitalWrite(hwConfig.pins.relay5v, LOW);
+          sysState.relay.rly24vState = false;
+          sysState.relay.rly5vState = false;
+          sysState.connection.isCanConnected = false;
+          sysState.can.canCheckStarted = false;
+        }
+      }
+    }
+  }
 }
 
 void setup()
@@ -964,7 +1113,7 @@ void setup()
   }
 
   currentState = READY;
-  sysState.stateChanged = true; // 상태 변경 플래그 설정
+  sysState.display.stateChanged = true; // 상태 변경 플래그 설정
   updateDisplayState();
 
   scanI2CDevices(); // I2C 스캐너 먼저 실행
@@ -1019,157 +1168,15 @@ void loop()
   checkSwitchInput();      // 스위치 입력 감지
   handleLEDControl();      // LED 제어
 
-  if (sysState.isConnected && !sysState.isDisconnecting)
+  if (sysState.connection.isConnected && !sysState.connection.isDisconnecting)
   {
     checkCANCommunication(); // CAN 통신 확인
     // CAN이 연결되어 있고, 명령이 전송되지 않았으며, 강제 중지 상태가 아닐 때만 명령 전송
-    if (sysState.isCanConnected && !sysState.commandsSent && !sysState.forceStopActivated)
+    if (sysState.connection.isCanConnected && !sysState.can.commandsSent && !sysState.connection.forceStopActivated)
     {
       sendExtDevTestCommands();
     }
   }
 
   handleCurrentMonitor(); // 전류 모니터링 주기적 호출
-}
-
-// CAN 메시지 전송 함수 구현
-bool sendCanMessage(uint32_t id, uint8_t bank, uint16_t number, uint32_t data)
-{
-  CANMessage message;
-  message.id = id;
-  message.len = 8; // 고정 길이 8바이트
-
-  // 데이터 패킹 (Big Endian)
-  message.data[0] = bank;            // Bank 번호
-  message.data[1] = 2;               // 고정값
-  message.data[2] = (number >> 8);   // Data ID (상위 바이트)
-  message.data[3] = (number & 0xFF); // Data ID (하위 바이트)
-  message.data[4] = (data >> 24);    // Data (최상위 바이트)
-  message.data[5] = (data >> 16);    // Data
-  message.data[6] = (data >> 8);     // Data
-  message.data[7] = (data & 0xFF);   // Data (최하위 바이트)
-
-  // 재전송 로직
-  for (int retry = 0; retry < hwConfig.can.retryCount; retry++)
-  {
-    if (ACAN_ESP32::can.tryToSend(message))
-    {
-      Serial.print("CAN 송신 성공 (시도 ");
-      Serial.print(retry + 1);
-      Serial.print("/");
-      Serial.print(hwConfig.can.retryCount);
-      Serial.println(")");
-      sysState.canTimeoutStart = millis(); // CAN 메시지 전송 성공 시 타임아웃 시간 갱신
-      return true;
-    }
-
-    Serial.print("CAN 송신 실패 (시도 ");
-    Serial.print(retry + 1);
-    Serial.print("/");
-    Serial.print(hwConfig.can.retryCount);
-    Serial.println(")");
-
-    delay(hwConfig.can.retryDelay);
-  }
-
-  return false;
-}
-
-// CAN 통신 초기화 함수 구현
-void initCAN()
-{
-  ACAN_ESP32_Settings settings(hwConfig.can.speed);
-  settings.mRxPin = hwConfig.pins.canRx;
-  settings.mTxPin = hwConfig.pins.canTx;
-
-  const uint32_t errorCode = ACAN_ESP32::can.begin(settings);
-
-  if (errorCode == 0)
-  {
-    Serial.println("CAN 통신 초기화 완료");
-  }
-  else
-  {
-    Serial.print("CAN 통신 초기화 실패, 에러 코드: 0x");
-    Serial.println(errorCode, HEX);
-  }
-}
-
-// CAN 통신 모니터링 함수 구현
-void checkCANCommunication()
-{
-  // CAN 에러 상태면 체크 중단
-  if (sysState.canError)
-  {
-    return;
-  }
-
-  unsigned long currentMillis = millis();
-
-  // 5V 릴레이가 ON일 때만 처리
-  if (sysState.rly5vState)
-  {
-    if (!sysState.canCheckStarted)
-    {
-      // 5V 릴레이 ON 후 500ms 대기
-      if (currentMillis - sysState.lastCanCheckTime >= 500)
-      {
-        sysState.canCheckStarted = true;          // CAN 체크 시작
-        sysState.canTimeoutStart = currentMillis; // 타임아웃 시작 시간 설정
-        Serial.println("CAN 통신 체크 시작 - 메시지 송신");
-
-        // CAN 메시지 송신
-        if (sendCanMessage(hwConfig.can.rmcId, 0, 1, 2))
-        {
-          Serial.println("CAN 메시지 송신 완료 - 응답 대기 중");
-        }
-        else
-        {
-          Serial.println("CAN 메시지 송신 실패");
-          sysState.canError = true;
-          currentState = READY;
-          sysState.stateChanged = true;
-          updateDisplayState();
-        }
-      }
-    }
-    else
-    {
-      CANMessage message;
-      if (ACAN_ESP32::can.receive(message))
-      {
-        if (!sysState.isCanConnected)
-        { // CAN 연결이 처음 확인된 경우에만
-          sysState.isCanConnected = true;
-          sysState.canError = false; // CAN 에러 상태 해제
-          Serial.println("CAN 통신 연결 확인 - 장비 제어 명령 전송 시작");
-
-          // 상태 머신 초기화
-          sysState.cmdState = CMD_IDLE;
-          sysState.commandsSent = false;
-        }
-        sysState.canTimeoutStart = currentMillis; // CAN 메시지 수신 시 타임아웃 시작 시간 갱신
-      }
-      else
-      {
-        // CAN 메시지가 수신되지 않았고, 1.5초가 지났을 경우
-        if (currentMillis - sysState.canTimeoutStart >= hwConfig.can.timeoutMs)
-        {
-          sysState.canError = true;
-          currentState = READY;         // READY 상태로 변경
-          sysState.stateChanged = true; // 상태 변경 플래그 설정
-          updateDisplayState();         // 디스플레이 업데이트
-          Serial.println("CAN 통신 타임아웃 - CAN 라인 점검 필요");
-
-          // 릴레이 차단
-          digitalWrite(hwConfig.pins.relay24v, LOW);
-          digitalWrite(hwConfig.pins.relay5v, LOW);
-          sysState.rly24vState = false;
-          sysState.rly5vState = false;
-          sysState.isCanConnected = false;
-          sysState.canCheckStarted = false;
-        }
-      }
-    }
-  }
 }
