@@ -11,6 +11,7 @@
 #define RLY_5V_PIN      16      // 5V 릴레이 제어 핀
 #define RLY_24V_PIN     17      // 24V 릴레이 제어 핀
 #define SW_STOP_PIN     34      // 스톱 스위치 모니터링 핀
+#define SW_START_PIN    35      // 스타트 스위치 모니터링 핀
 #define CAN_TX_PIN      GPIO_NUM_19  // CAN TX 핀
 #define CAN_RX_PIN      GPIO_NUM_18  // CAN RX 핀
 
@@ -88,6 +89,7 @@ enum TestState {
   CONNECTED,  // 연결 직후 대기
   LED_TEST,   // LED 검사 중
   VIB_TEST,   // 진동 검사 중
+  PAUSE,      // 검사 일시 정지 상태
   DISCON      // 연결 해제
 };
 
@@ -110,6 +112,12 @@ int switchStateCount = 0;          // 상태 카운트
 unsigned long lastSwitchScanTime = 0;  // 마지막 스캔 시간
 bool isSwitchPressed = false;      // 스위치 눌림 상태
 bool forceStopActivated = false;   // 강제 중지 활성화 여부
+
+// START 스위치 관련 변수 추가
+bool lastStartSwitchState = HIGH;  // 이전 START 스위치 상태
+bool currentStartSwitchState = HIGH; // 현재 START 스위치 상태
+int startSwitchStateCount = 0;     // START 스위치 상태 카운트
+bool isStartSwitchPressed = false; // START 스위치 눌림 상태
 
 // 명령 전송 상태 정의
 enum CommandState {
@@ -186,6 +194,9 @@ void updateDisplayState() {
         break;
       case VIB_TEST:
         display.println("VIB TEST");
+        break;
+      case PAUSE:
+        display.println("PAUSE");
         break;
       case DISCON:
         display.println("DISCON");
@@ -414,7 +425,10 @@ void handleStateChange(float voltage, bool swStopState) {
       previousMillis = currentMillis;
       rly24vDelay = currentMillis + 500;  // 500ms 이후 24V 릴레이와 5V릴레이 모두 OFF
       rly5vDelay = currentMillis + 500;  
+      
+      // PAUSE 상태일 때도 READY로 변경
       currentState = READY;
+      
       disconnectTime = currentMillis;  // 연결 해제 시간 저장
       stateChanged = true;  // 상태 변경 플래그 설정      
       
@@ -426,6 +440,7 @@ void handleStateChange(float voltage, bool swStopState) {
       lastCanCheckTime = 0;
       cmdState = CMD_IDLE;
       commandsSent = false;
+      forceStopActivated = false;  // 강제 중지 상태도 해제
 
       updateDisplayState();
       Serial.println("CAN 관련 상태 초기화 완료");
@@ -434,7 +449,7 @@ void handleStateChange(float voltage, bool swStopState) {
     // 연결 감지
     // 강제 중지 상태일 때는 연결을 무시
     if (forceStopActivated) {
-      Serial.println("강제 중지 상태입니다. 장치를 분리했다가 다시 연결해주세요.");
+      Serial.println("강제 중지 상태입니다. START 스위치를 눌러 재시작하거나, 장치를 분리했다가 다시 연결해주세요.");
       return;
     }
     
@@ -442,7 +457,12 @@ void handleStateChange(float voltage, bool swStopState) {
     previousMillis = currentMillis;
     rly24vDelay = currentMillis + 500;    // 24V 릴레이 먼저 HIGH
     rly5vDelay = currentMillis + 1000;    // 0.5초 후 5V 릴레이 HIGH
-    currentState = CONNECTED;
+    
+    // PAUSE 상태일 때는 CONNECTED로 변경하지 않음
+    if (currentState != PAUSE) {
+      currentState = CONNECTED;
+    }
+    
     stateChanged = true;  // 상태 변경 플래그 설정
     updateDisplayState();
   }
@@ -723,60 +743,121 @@ void checkSwitchInput() {
   if (currentMillis - lastSwitchScanTime >= SWITCH_SCAN_INTERVAL) {
     lastSwitchScanTime = currentMillis;
     
-    // 현재 스위치 상태 읽기
-    currentSwitchState = digitalRead(SW_STOP_PIN);
+    // STOP 스위치 처리
+    handleStopSwitch();
     
-    // 상태가 변경되었는지 확인
-    if (currentSwitchState != lastSwitchState) {
-      switchStateCount = 1;  // 카운트 초기화
-    } else {
-      switchStateCount++;    // 카운트 증가
-    }
-    
-    // 디바운스 카운트 확인
-    if (switchStateCount >= SWITCH_DEBOUNCE_COUNT) {
-      if (currentSwitchState != isSwitchPressed) {
-        isSwitchPressed = currentSwitchState;
+    // START 스위치 처리
+    handleStartSwitch();
+  }
+}
+
+// STOP 스위치 처리 함수
+void handleStopSwitch() {
+  // 현재 스위치 상태 읽기
+  currentSwitchState = digitalRead(SW_STOP_PIN);
+  
+  // 상태가 변경되었는지 확인
+  if (currentSwitchState != lastSwitchState) {
+    switchStateCount = 1;  // 카운트 초기화
+  } else {
+    switchStateCount++;    // 카운트 증가
+  }
+  
+  // 디바운스 카운트 확인
+  if (switchStateCount >= SWITCH_DEBOUNCE_COUNT) {
+    if (currentSwitchState != isSwitchPressed) {
+      isSwitchPressed = currentSwitchState;
+      
+      // 스위치 상태 변경 시 처리
+      if (isSwitchPressed) {
+        Serial.println("STOP 스위치 해제됨");
+      } else {
+        Serial.println("STOP 스위치 눌림 감지!");
         
-        // 스위치 상태 변경 시 처리
-        if (isSwitchPressed) {
-          Serial.println("스위치 해제됨");
-        } else {
-          Serial.println("스위치 눌림 감지!");
+        // 검사 중일 때만 처리 (READY 상태가 아닐 때)
+        if (currentState != READY && currentState != PAUSE) {
+          Serial.println("검사 일시 정지!");
           
-          // 검사 중일 때만 처리
-          if (currentState != READY) {
-            Serial.println("검사 강제 중지!");          
-                
-            // 릴레이 즉시 차단
-            digitalWrite(RLY_24V_PIN, LOW);
-            digitalWrite(RLY_5V_PIN, LOW);
-            rly24vState = false;
-            rly5vState = false;
-            Serial.println("24V 릴레이 OFF");
-            Serial.println("5V 릴레이 OFF");
-            
-            // 상태 초기화
-            currentState = READY;
-            stateChanged = true;
-            isCanConnected = false;
-            commandsSent = false;
-            currentMonitorActive = false;
-            
-            // 강제 중지 상태 활성화
-            forceStopActivated = true;
-            
-            // 디스플레이 업데이트
-            updateDisplayState();
-            
-            Serial.println("검사가 중지되었습니다. 장치를 분리했다가 다시 연결해주세요.");
-          }
+          // 릴레이 즉시 차단
+          digitalWrite(RLY_24V_PIN, LOW);
+          digitalWrite(RLY_5V_PIN, LOW);
+          rly24vState = false;
+          rly5vState = false;
+          Serial.println("24V 릴레이 OFF");
+          Serial.println("5V 릴레이 OFF");
+          
+          // 상태를 PAUSE로 변경
+          currentState = PAUSE;
+          stateChanged = true;
+          isCanConnected = false;
+          commandsSent = false;
+          currentMonitorActive = false;
+          
+          // 강제 중지 상태 활성화
+          forceStopActivated = true;
+          
+          // 디스플레이 업데이트
+          updateDisplayState();
+          
+          Serial.println("검사가 일시 정지되었습니다. START 스위치를 눌러 재시작하거나, 장치를 분리했다가 다시 연결해주세요.");
         }
       }
     }
-    
-    lastSwitchState = currentSwitchState;
   }
+  
+  lastSwitchState = currentSwitchState;
+}
+
+// START 스위치 처리 함수
+void handleStartSwitch() {
+  // 현재 스위치 상태 읽기
+  currentStartSwitchState = digitalRead(SW_START_PIN);
+  
+  // 상태가 변경되었는지 확인
+  if (currentStartSwitchState != lastStartSwitchState) {
+    startSwitchStateCount = 1;  // 카운트 초기화
+  } else {
+    startSwitchStateCount++;    // 카운트 증가
+  }
+  
+  // 디바운스 카운트 확인
+  if (startSwitchStateCount >= SWITCH_DEBOUNCE_COUNT) {
+    if (currentStartSwitchState != isStartSwitchPressed) {
+      isStartSwitchPressed = currentStartSwitchState;
+      
+      // 스위치 상태 변경 시 처리
+      if (isStartSwitchPressed) {
+        Serial.println("START 스위치 해제됨");
+      } else {
+        Serial.println("START 스위치 눌림 감지!");
+        
+        // PAUSE 상태일 때만 처리
+        if (currentState == PAUSE) {
+          Serial.println("검사 재시작!");
+          
+          // 강제 중지 상태 해제
+          forceStopActivated = false;
+          
+          // 상태를 CONNECTED로 변경하여 검사 재시작
+          currentState = CONNECTED;
+          stateChanged = true;
+          
+          // 릴레이 제어 타이밍 설정
+          unsigned long currentMillis = millis();
+          previousMillis = currentMillis;
+          rly24vDelay = currentMillis + 500;    // 24V 릴레이 먼저 HIGH
+          rly5vDelay = currentMillis + 1000;    // 0.5초 후 5V 릴레이 HIGH
+          
+          // 디스플레이 업데이트
+          updateDisplayState();
+          
+          Serial.println("검사가 재시작됩니다.");
+        }
+      }
+    }
+  }
+  
+  lastStartSwitchState = currentStartSwitchState;
 }
 
 void setup() {
@@ -802,6 +883,7 @@ void setup() {
   pinMode(RLY_5V_PIN, OUTPUT);
   pinMode(RLY_24V_PIN, OUTPUT);
   pinMode(SW_STOP_PIN, INPUT);
+  pinMode(SW_START_PIN, INPUT);
   
   // 초기 상태 설정
   digitalWrite(RLY_5V_PIN, LOW);
