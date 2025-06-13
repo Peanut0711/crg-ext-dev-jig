@@ -12,6 +12,8 @@
 #define RLY_24V_PIN     17      // 24V 릴레이 제어 핀
 #define SW_STOP_PIN     34      // 스톱 스위치 모니터링 핀
 #define SW_START_PIN    35      // 스타트 스위치 모니터링 핀
+#define LED_STOP_PIN    32      // STOP LED 핀
+#define LED_START_PIN   33      // START LED 핀
 #define CAN_TX_PIN      GPIO_NUM_19  // CAN TX 핀
 #define CAN_RX_PIN      GPIO_NUM_18  // CAN RX 핀
 
@@ -145,6 +147,58 @@ const unsigned long LED_CHECK_MS = 3000;     // 3초
 unsigned long canTimeoutStart = 0;  // CAN 타임아웃 시작 시간
 bool canError = false;  // CAN 에러 상태
 bool canCheckStarted = false;  // CAN 체크 시작 여부
+
+// LED 제어 관련 변수
+unsigned long lastLedBlinkTime = 0;  // 마지막 LED 점멸 시간
+const unsigned long LED_BLINK_INTERVAL = 500;  // LED 점멸 주기 (0.5초)
+
+// LED 상태 설정 함수
+void setLEDState(bool startLed, bool stopLed) {
+  digitalWrite(LED_START_PIN, startLed);
+  digitalWrite(LED_STOP_PIN, stopLed);
+}
+
+// LED 제어 함수
+void handleLEDControl() {
+  static bool ledState = false;
+  unsigned long currentMillis = millis();
+  
+  // 에러 상태 체크
+  if (canError) {
+    // 에러 상태: 두 LED 모두 점멸
+    if (currentMillis - lastLedBlinkTime >= LED_BLINK_INTERVAL) {
+      lastLedBlinkTime = currentMillis;
+      ledState = !ledState;
+      setLEDState(ledState, ledState);
+    }
+    return;
+  }
+  
+  // 일반 상태에 따른 LED 제어
+  switch (currentState) {
+    case READY:
+    case PAUSE:
+    case DISCON:
+      // START LED 점멸, STOP LED 꺼짐
+      if (currentMillis - lastLedBlinkTime >= LED_BLINK_INTERVAL) {
+        lastLedBlinkTime = currentMillis;
+        ledState = !ledState;
+        setLEDState(ledState, false);
+      }
+      break;
+      
+    case START:
+    case LED_TEST:
+    case VIB_TEST:
+      // START LED 꺼짐, STOP LED 점멸
+      if (currentMillis - lastLedBlinkTime >= LED_BLINK_INTERVAL) {
+        lastLedBlinkTime = currentMillis;
+        ledState = !ledState;
+        setLEDState(false, ledState);
+      }
+      break;
+  }
+}
 
 // OLED 전류 표시 함수 (전류값만 표시)
 void updateDisplayCurrent(float current) {
@@ -884,6 +938,12 @@ void setup() {
   pinMode(RLY_24V_PIN, OUTPUT);
   pinMode(SW_STOP_PIN, INPUT);
   pinMode(SW_START_PIN, INPUT);
+  pinMode(LED_START_PIN, OUTPUT);
+  pinMode(LED_STOP_PIN, OUTPUT);
+  
+  // LED 초기 상태 설정
+  digitalWrite(LED_START_PIN, LOW);
+  digitalWrite(LED_STOP_PIN, LOW);
   
   // 초기 상태 설정
   digitalWrite(RLY_5V_PIN, LOW);
@@ -913,6 +973,7 @@ void loop() {
   checkConnectionStatus();   // 연결 상태 확인
   handleRelayControl();      // 릴레이 제어
   checkSwitchInput();        // 스위치 입력 감지
+  handleLEDControl();        // LED 제어
   
   if (isConnected && !isDisconnecting) {
     checkCANCommunication();  // CAN 통신 확인    
