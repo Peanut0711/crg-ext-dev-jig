@@ -86,7 +86,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // 검사 상태 정의
 enum TestState {
   READY,      // 초기 상태 및 연결 해제 후
-  CONNECTED,  // 연결 직후 대기
+  START,      // 검사 시작 준비 상태
   LED_TEST,   // LED 검사 중
   VIB_TEST,   // 진동 검사 중
   PAUSE,      // 검사 일시 정지 상태
@@ -180,8 +180,8 @@ void updateDisplayState() {
       case READY:
         display.clearDisplay();
         break;
-      case CONNECTED:
-        display.println("CONNECTED");
+      case START:
+        display.println("START");
         // 연결 시점에 전압값 표시
         display.fillRect(0, 16, SCREEN_WIDTH, 16, SSD1306_BLACK);
         display.setCursor(0,16);
@@ -458,9 +458,9 @@ void handleStateChange(float voltage, bool swStopState) {
     rly24vDelay = currentMillis + 500;    // 24V 릴레이 먼저 HIGH
     rly5vDelay = currentMillis + 1000;    // 0.5초 후 5V 릴레이 HIGH
     
-    // PAUSE 상태일 때는 CONNECTED로 변경하지 않음
+    // PAUSE 상태일 때는 START로 변경하지 않음
     if (currentState != PAUSE) {
-      currentState = CONNECTED;
+      currentState = START;
     }
     
     stateChanged = true;  // 상태 변경 플래그 설정
@@ -838,8 +838,8 @@ void handleStartSwitch() {
           // 강제 중지 상태 해제
           forceStopActivated = false;
           
-          // 상태를 CONNECTED로 변경하여 검사 재시작
-          currentState = CONNECTED;
+          // 상태를 START로 변경하여 검사 재시작
+          currentState = START;
           stateChanged = true;
           
           // 릴레이 제어 타이밍 설정
