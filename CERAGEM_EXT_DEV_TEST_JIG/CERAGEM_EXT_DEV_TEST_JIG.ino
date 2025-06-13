@@ -6,36 +6,64 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-// 핀 정의
-#define ADC_PIN         36      // ADC1 핀
-#define RLY_5V_PIN      16      // 5V 릴레이 제어 핀
-#define RLY_24V_PIN     17      // 24V 릴레이 제어 핀
-#define SW_STOP_PIN     34      // 스톱 스위치 모니터링 핀
-#define SW_START_PIN    35      // 스타트 스위치 모니터링 핀
-#define LED_STOP_PIN    32      // STOP LED 핀
-#define LED_START_PIN   33      // START LED 핀
-#define CAN_TX_PIN      GPIO_NUM_19  // CAN TX 핀
-#define CAN_RX_PIN      GPIO_NUM_18  // CAN RX 핀
+// 하드웨어 설정 구조체
+struct HardwareConfig {
+    // 핀 정의
+    struct {
+        const uint8_t adc = 36;      // ADC1 핀
+        const uint8_t relay5v = 16;  // 5V 릴레이 제어 핀
+        const uint8_t relay24v = 17; // 24V 릴레이 제어 핀
+        const uint8_t swStop = 34;   // 스톱 스위치 모니터링 핀
+        const uint8_t swStart = 35;  // 스타트 스위치 모니터링 핀
+        const uint8_t ledStop = 32;  // STOP LED 핀
+        const uint8_t ledStart = 33; // START LED 핀
+        const gpio_num_t canTx = GPIO_NUM_19;    // CAN TX 핀
+        const gpio_num_t canRx = GPIO_NUM_18;    // CAN RX 핀
+    } pins;
 
-// CAN 통신 설정
-#define CAN_SPEED       500000  // CAN 통신 속도 (500kbps)
-#define CAN_RETRY_COUNT 3       // CAN 메시지 재전송 횟수
-#define CAN_RETRY_DELAY 100     // 재전송 간격 (ms)
-#define CAN_TIMEOUT_MS  1500    // CAN 타임아웃 시간 (1.5초)
+    // 타이밍 설정
+    struct {
+        const unsigned long cmdDelay1 = 100;     // 명령 간 기본 지연 시간 (ms)
+        const unsigned long cmdDelay2 = 500;     // 마사지 제어 전 지연 시간 (ms)
+        const unsigned long ledCheckTime = 3000; // LED 검사 시간 (3초)
+        const unsigned long peakResetTime = 2000;// 피크값 초기화 시간 (2초)
+        const unsigned long currentPrintTime = 500; // 전류 출력 주기 (500ms)
+        const unsigned long ledBlinkInterval = 500; // LED 점멸 주기 (0.5초)
+    } timing;
 
-// CAN ID 정의
-#define RMC_ID          0x01    // RMC CAN ID
+    // CAN 통신 설정
+    struct {
+        const uint32_t speed = 500000;    // CAN 통신 속도 (500kbps)
+        const uint8_t retryCount = 3;     // CAN 메시지 재전송 횟수
+        const uint8_t retryDelay = 100;   // 재전송 간격 (ms)
+        const uint16_t timeoutMs = 1500;  // CAN 타임아웃 시간 (1.5초)
+        const uint32_t rmcId = 0x01;      // RMC CAN ID
+    } can;
 
-// 타이밍 설정
-#define CMD_DELAY_1     100     // 명령 간 기본 지연 시간 (ms)
-#define CMD_DELAY_2     500     // 마사지 제어 전 지연 시간 (ms)
-#define LED_CHECK_TIME  3000    // LED 검사 시간 (3초)
-#define PEAK_RESET_TIME 2000    // 피크값 초기화 시간 (2초)
-#define CURRENT_PRINT_TIME 500  // 전류 출력 주기 (500ms)
+    // 디스플레이 설정
+    struct {
+        const uint8_t width = 128;
+        const uint8_t height = 64;
+        const int8_t reset = -1;
+        const uint8_t address = 0x3C;
+    } display;
 
-// 제품 연결 상태 판단을 위한 임계값 설정
-const float CONNECTED_THRESHOLD = 2.0;  // 2.0V 이하이면 제품 연결로 판단
-const unsigned long DEBOUNCE_DELAY = 500;  // 디바운싱 시간 (500ms)
+    // 전류 측정 설정
+    struct {
+        const uint8_t ina226Addr = 0x40;  // INA226 I2C 주소
+        const float maxCurrent = 3.0;     // 최대 전류 (A)
+        const float shuntResistor = 0.005;// 션트 저항 (옴)
+    } current;
+
+    // 연결 상태 판단 설정
+    struct {
+        const float connectedThreshold = 2.0;  // 2.0V 이하이면 제품 연결로 판단
+        const unsigned long debounceDelay = 500;  // 디바운싱 시간 (500ms)
+    } connection;
+};
+
+// 전역 하드웨어 설정 인스턴스
+const HardwareConfig hwConfig;
 
 bool isConnected = false;  // 제품 연결 상태
 bool lastState = false;    // 이전 상태
@@ -154,8 +182,8 @@ const unsigned long LED_BLINK_INTERVAL = 500;  // LED 점멸 주기 (0.5초)
 
 // LED 상태 설정 함수
 void setLEDState(bool startLed, bool stopLed) {
-  digitalWrite(LED_START_PIN, startLed);
-  digitalWrite(LED_STOP_PIN, stopLed);
+  digitalWrite(hwConfig.pins.ledStart, startLed);
+  digitalWrite(hwConfig.pins.ledStop, stopLed);
 }
 
 // LED 제어 함수
@@ -179,7 +207,7 @@ void handleLEDControl() {
     case READY:
     case PAUSE:
     case DISCON:
-      // START LED 점멸, STOP LED 꺼짐
+      // START LED 점멸, STOP LED 꺼짐+
       if (currentMillis - lastLedBlinkTime >= LED_BLINK_INTERVAL) {
         lastLedBlinkTime = currentMillis;
         ledState = !ledState;
@@ -203,7 +231,7 @@ void handleLEDControl() {
 // OLED 전류 표시 함수 (전류값만 표시)
 void updateDisplayCurrent(float current) {
   // 전류값 영역만 지우기
-  display.fillRect(0, 32, SCREEN_WIDTH, 16, SSD1306_BLACK);
+  display.fillRect(0, 32, hwConfig.display.width, 16, SSD1306_BLACK);
   
   // VIB_TEST 상태일 때만 전류값 표시
   if (currentState == VIB_TEST) {
@@ -222,7 +250,7 @@ void updateDisplayCurrent(float current) {
 void updateDisplayState() {
   if (!stateChanged) return;
   
-  display.fillRect(0, 0, SCREEN_WIDTH, 16, SSD1306_BLACK);
+  display.fillRect(0, 0, hwConfig.display.width, 16, SSD1306_BLACK);
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0,0);
@@ -237,10 +265,10 @@ void updateDisplayState() {
       case START:
         display.println("START");
         // 연결 시점에 전압값 표시
-        display.fillRect(0, 16, SCREEN_WIDTH, 16, SSD1306_BLACK);
+        display.fillRect(0, 16, hwConfig.display.width, 16, SSD1306_BLACK);
         display.setCursor(0,16);
         display.print("VOLT:");
-        display.print((analogRead(ADC_PIN) * 3.3) / 4095.0, 2);
+        display.print((analogRead(hwConfig.pins.adc) * 3.3) / 4095.0, 2);
         display.println("V");
         break;
       case LED_TEST:
@@ -273,13 +301,13 @@ void handleCurrentMonitor() {
   unsigned long now = millis();
   
   // 3초마다 피크값 초기화
-  if (now - lastPeakResetTime >= PEAK_RESET_TIME) {
+  if (now - lastPeakResetTime >= hwConfig.timing.peakResetTime) {
     peakCurrent = 0.0;
     lastPeakResetTime = now;
     justReset = true;  // 초기화 순간 표시
   }
   
-  if (now - lastCurrentPrintTime >= CURRENT_PRINT_TIME) {
+  if (now - lastCurrentPrintTime >= hwConfig.timing.currentPrintTime) {
     lastCurrentPrintTime = now;
     float current_mA = ina226.getCurrent_mA();
     float current_A = current_mA / 1000.0;
@@ -332,12 +360,12 @@ bool sendCanMessage(uint32_t id, uint8_t bank, uint16_t number, uint32_t data) {
   message.data[7] = (data & 0xFF);  // Data (최하위 바이트)
   
   // 재전송 로직
-  for (int retry = 0; retry < CAN_RETRY_COUNT; retry++) {
+  for (int retry = 0; retry < hwConfig.can.retryCount; retry++) {
     if (ACAN_ESP32::can.tryToSend(message)) {
       Serial.print("CAN 송신 성공 (시도 ");
       Serial.print(retry + 1);
       Serial.print("/");
-      Serial.print(CAN_RETRY_COUNT);
+      Serial.print(hwConfig.can.retryCount);
       Serial.println(")");
       canTimeoutStart = millis();  // CAN 메시지 전송 성공 시 타임아웃 시간 갱신
       return true;
@@ -346,10 +374,10 @@ bool sendCanMessage(uint32_t id, uint8_t bank, uint16_t number, uint32_t data) {
     Serial.print("CAN 송신 실패 (시도 ");
     Serial.print(retry + 1);
     Serial.print("/");
-    Serial.print(CAN_RETRY_COUNT);
+    Serial.print(hwConfig.can.retryCount);
     Serial.println(")");
     
-    delay(CAN_RETRY_DELAY);
+    delay(hwConfig.can.retryDelay);
   }
   
   return false;
@@ -357,9 +385,9 @@ bool sendCanMessage(uint32_t id, uint8_t bank, uint16_t number, uint32_t data) {
 
 // CAN 통신 초기화
 void initCAN() {
-  ACAN_ESP32_Settings settings(CAN_SPEED);
-  settings.mRxPin = CAN_RX_PIN;
-  settings.mTxPin = CAN_TX_PIN;
+  ACAN_ESP32_Settings settings(hwConfig.can.speed);
+  settings.mRxPin = hwConfig.pins.canRx;
+  settings.mTxPin = hwConfig.pins.canTx;
   
   const uint32_t errorCode = ACAN_ESP32::can.begin(settings);
   
@@ -390,7 +418,7 @@ void checkCANCommunication() {
         Serial.println("CAN 통신 체크 시작 - 메시지 송신");
         
         // CAN 메시지 송신
-        if (sendCanMessage(RMC_ID, 0, 1, 2)) {
+        if (sendCanMessage(hwConfig.can.rmcId, 0, 1, 2)) {
           Serial.println("CAN 메시지 송신 완료 - 응답 대기 중");
         } else {
           Serial.println("CAN 메시지 송신 실패");
@@ -415,7 +443,7 @@ void checkCANCommunication() {
         canTimeoutStart = currentMillis;  // CAN 메시지 수신 시 타임아웃 시작 시간 갱신
       } else {
         // CAN 메시지가 수신되지 않았고, 1.5초가 지났을 경우
-        if (currentMillis - canTimeoutStart >= CAN_TIMEOUT_MS) {
+        if (currentMillis - canTimeoutStart >= hwConfig.can.timeoutMs) {
           canError = true;
           currentState = READY;  // READY 상태로 변경
           stateChanged = true;   // 상태 변경 플래그 설정
@@ -423,8 +451,8 @@ void checkCANCommunication() {
           Serial.println("CAN 통신 타임아웃 - CAN 라인 점검 필요");
           
           // 릴레이 차단
-          digitalWrite(RLY_24V_PIN, LOW);
-          digitalWrite(RLY_5V_PIN, LOW);
+          digitalWrite(hwConfig.pins.relay24v, LOW);
+          digitalWrite(hwConfig.pins.relay5v, LOW);
           rly24vState = false;
           rly5vState = false;
           isCanConnected = false;
@@ -437,12 +465,12 @@ void checkCANCommunication() {
 
 // 전압 측정 및 연결 상태 확인
 void checkConnectionStatus() {
-  int adcValue = analogRead(ADC_PIN);
+  int adcValue = analogRead(hwConfig.pins.adc);
   float voltage = (adcValue * 3.3) / 4095.0;
-  bool swStopState = (digitalRead(SW_STOP_PIN) == LOW);
+  bool swStopState = (digitalRead(hwConfig.pins.swStop) == LOW);
   
   // 현재 연결 상태 확인
-  bool currentConnectionState = (voltage < CONNECTED_THRESHOLD);
+  bool currentConnectionState = (voltage < hwConfig.connection.connectedThreshold);
   unsigned long currentMillis = millis();
   
   // 디바운싱 처리
@@ -451,7 +479,7 @@ void checkConnectionStatus() {
   }
   
   // 디바운싱 시간이 지났고, 상태가 변경되었을 때만 처리
-  if ((currentMillis - lastDebounceTime) > DEBOUNCE_DELAY) {
+  if ((currentMillis - lastDebounceTime) > hwConfig.connection.debounceDelay) {
     if (currentConnectionState != isConnected) {
       isConnected = currentConnectionState;
       
@@ -553,17 +581,17 @@ void handleConnectedState(unsigned long currentMillis) {
   }
 
   if (currentMillis >= rly24vDelay && !rly24vState) {
-    digitalWrite(RLY_24V_PIN, HIGH);
+    digitalWrite(hwConfig.pins.relay24v, HIGH);
     rly24vState = true;
     Serial.println("24V 릴레이 ON");
   }
   if (currentMillis >= rly5vDelay && !rly5vState) {
-    digitalWrite(RLY_5V_PIN, HIGH);
+    digitalWrite(hwConfig.pins.relay5v, HIGH);
     rly5vState = true;
     Serial.println("5V 릴레이 ON");
     // 5V 인가 후 500ms 대기 후 CAN 통신 시작
-    lastCanCheckTime = currentMillis + CAN_TIMEOUT_MS;  // 1.5초 후 CAN 체크 시작
-    canTimeoutStart = currentMillis + CAN_TIMEOUT_MS;  // 1.5초 후 타임아웃 체크
+    lastCanCheckTime = currentMillis + hwConfig.can.timeoutMs;  // 1.5초 후 CAN 체크 시작
+    canTimeoutStart = currentMillis + hwConfig.can.timeoutMs;  // 1.5초 후 타임아웃 체크
     canCheckStarted = false;  // CAN 체크 시작 플래그 초기화
     Serial.println("CAN 통신 대기 중... (1.5초)");
   }
@@ -572,12 +600,12 @@ void handleConnectedState(unsigned long currentMillis) {
 // 연결해제 시 릴레이 제어
 void handleDisconnectingState(unsigned long currentMillis) {
   if (currentMillis >= rly24vDelay && rly24vState) {
-    digitalWrite(RLY_24V_PIN, LOW);
+    digitalWrite(hwConfig.pins.relay24v, LOW);
     rly24vState = false;
     Serial.println("24V 릴레이 OFF");
   }
   if (currentMillis >= rly5vDelay && rly5vState) {
-    digitalWrite(RLY_5V_PIN, LOW);
+    digitalWrite(hwConfig.pins.relay5v, LOW);
     rly5vState = false;
     isDisconnecting = false;
     // CAN 관련 상태 초기화
@@ -614,7 +642,7 @@ void sendExtDevTestCommands() {
       
     case CMD_RMC_ON:
       Serial.println("1. RMC ON 명령 전송 중...");
-      if (sendCanMessage(RMC_ID, 0, 1, 2)) {
+      if (sendCanMessage(hwConfig.can.rmcId, 0, 1, 2)) {
         Serial.println("   RMC ON 명령 전송 완료");
         cmdStartTime = currentMillis;
         cmdState = CMD_LED_MODE;
@@ -630,7 +658,7 @@ void sendExtDevTestCommands() {
     case CMD_LED_MODE:
       if (currentMillis - cmdStartTime >= CMD_DELAY_1_MS) {
         Serial.println("2. LED 검사 모드 설정 중...");
-        if (sendCanMessage(RMC_ID, 6, 22, 4)) {
+        if (sendCanMessage(hwConfig.can.rmcId, 6, 22, 4)) {
           Serial.println("   LED 검사 모드 설정 완료");
           cmdStartTime = currentMillis;
           cmdState = CMD_LED_START;
@@ -647,7 +675,7 @@ void sendExtDevTestCommands() {
     case CMD_LED_START:
       if (currentMillis - cmdStartTime >= CMD_DELAY_1_MS) {
         Serial.println("3. LED 검사 시작...");
-        if (sendCanMessage(RMC_ID, 6, 21, 1)) {
+        if (sendCanMessage(hwConfig.can.rmcId, 6, 21, 1)) {
           Serial.println("   LED 검사 시작 완료");
           currentState = LED_TEST;
           stateChanged = true;
@@ -673,7 +701,7 @@ void sendExtDevTestCommands() {
       
     case CMD_LED_PAUSE:
       Serial.println("4. LED 검사 일시정지...");
-      if (sendCanMessage(RMC_ID, 6, 21, 2)) {
+      if (sendCanMessage(hwConfig.can.rmcId, 6, 21, 2)) {
         Serial.println("   LED 검사 일시정지 완료");
         cmdStartTime = currentMillis;
         cmdState = CMD_VIB_MODE;
@@ -689,7 +717,7 @@ void sendExtDevTestCommands() {
     case CMD_VIB_MODE:
       if (currentMillis - cmdStartTime >= CMD_DELAY_1_MS) {
         Serial.println("5. 진동 검사 모드 설정 중...");
-        if (sendCanMessage(RMC_ID, 6, 22, 1)) {
+        if (sendCanMessage(hwConfig.can.rmcId, 6, 22, 1)) {
           Serial.println("   진동 검사 모드 설정 완료");
           cmdStartTime = currentMillis;
           cmdState = CMD_TEMP_SET;
@@ -706,7 +734,7 @@ void sendExtDevTestCommands() {
     case CMD_TEMP_SET:
       if (currentMillis - cmdStartTime >= CMD_DELAY_1_MS) {
         Serial.println("6. 온도 설정 중...");
-        if (sendCanMessage(RMC_ID, 6, 28, 450)) {
+        if (sendCanMessage(hwConfig.can.rmcId, 6, 28, 450)) {
           Serial.println("   온도 설정 완료");
           cmdStartTime = currentMillis;
           cmdState = CMD_STRENGTH_SET;
@@ -723,7 +751,7 @@ void sendExtDevTestCommands() {
     case CMD_STRENGTH_SET:
       if (currentMillis - cmdStartTime >= CMD_DELAY_1_MS) {
         Serial.println("7. 마사지 강도 설정 중...");
-        if (sendCanMessage(RMC_ID, 6, 23, 3)) {
+        if (sendCanMessage(hwConfig.can.rmcId, 6, 23, 3)) {
           Serial.println("   마사지 강도 설정 완료");
           cmdStartTime = currentMillis;
           cmdState = CMD_VIB_START;
@@ -740,7 +768,7 @@ void sendExtDevTestCommands() {
     case CMD_VIB_START:
       if (currentMillis - cmdStartTime >= CMD_DELAY_2_MS) {
         Serial.println("8. 진동 검사 시작...");
-        if (sendCanMessage(RMC_ID, 6, 21, 1)) {
+        if (sendCanMessage(hwConfig.can.rmcId, 6, 21, 1)) {
           Serial.println("   진동 검사 시작 완료");
           currentState = VIB_TEST;
           stateChanged = true;
@@ -808,7 +836,7 @@ void checkSwitchInput() {
 // STOP 스위치 처리 함수
 void handleStopSwitch() {
   // 현재 스위치 상태 읽기
-  currentSwitchState = digitalRead(SW_STOP_PIN);
+  currentSwitchState = digitalRead(hwConfig.pins.swStop);
   
   // 상태가 변경되었는지 확인
   if (currentSwitchState != lastSwitchState) {
@@ -833,8 +861,8 @@ void handleStopSwitch() {
           Serial.println("검사 일시 정지!");
           
           // 릴레이 즉시 차단
-          digitalWrite(RLY_24V_PIN, LOW);
-          digitalWrite(RLY_5V_PIN, LOW);
+          digitalWrite(hwConfig.pins.relay24v, LOW);
+          digitalWrite(hwConfig.pins.relay5v, LOW);
           rly24vState = false;
           rly5vState = false;
           Serial.println("24V 릴레이 OFF");
@@ -865,7 +893,7 @@ void handleStopSwitch() {
 // START 스위치 처리 함수
 void handleStartSwitch() {
   // 현재 스위치 상태 읽기
-  currentStartSwitchState = digitalRead(SW_START_PIN);
+  currentStartSwitchState = digitalRead(hwConfig.pins.swStart);
   
   // 상태가 변경되었는지 확인
   if (currentStartSwitchState != lastStartSwitchState) {
@@ -920,7 +948,7 @@ void setup() {
   delay(100); // 전원 안정화 대기
 
   // OLED 초기화
-  if(!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+  if(!display.begin(SSD1306_SWITCHCAPVCC, hwConfig.display.address)) {
     Serial.println(F("SSD1315(OLED) 초기화 실패"));
     for(;;); // 멈춤
     //TODO: SW 버튼을 주기적으로 깜빡이게 해서 동작 오류 표시 처리 필요
@@ -933,27 +961,27 @@ void setup() {
   scanI2CDevices(); // I2C 스캐너 먼저 실행
 
   // 핀 모드 설정
-  pinMode(ADC_PIN, INPUT);
-  pinMode(RLY_5V_PIN, OUTPUT);
-  pinMode(RLY_24V_PIN, OUTPUT);
-  pinMode(SW_STOP_PIN, INPUT);
-  pinMode(SW_START_PIN, INPUT);
-  pinMode(LED_START_PIN, OUTPUT);
-  pinMode(LED_STOP_PIN, OUTPUT);
+  pinMode(hwConfig.pins.adc, INPUT);
+  pinMode(hwConfig.pins.relay5v, OUTPUT);
+  pinMode(hwConfig.pins.relay24v, OUTPUT);
+  pinMode(hwConfig.pins.swStop, INPUT);
+  pinMode(hwConfig.pins.swStart, INPUT);
+  pinMode(hwConfig.pins.ledStart, OUTPUT);
+  pinMode(hwConfig.pins.ledStop, OUTPUT);
   
   // LED 초기 상태 설정
-  digitalWrite(LED_START_PIN, LOW);
-  digitalWrite(LED_STOP_PIN, LOW);
+  digitalWrite(hwConfig.pins.ledStart, LOW);
+  digitalWrite(hwConfig.pins.ledStop, LOW);
   
   // 초기 상태 설정
-  digitalWrite(RLY_5V_PIN, LOW);
-  digitalWrite(RLY_24V_PIN, LOW);
+  digitalWrite(hwConfig.pins.relay5v, LOW);
+  digitalWrite(hwConfig.pins.relay24v, LOW);
   
   // CAN 통신 초기화
   initCAN();
   if (ina226.begin()) {
     Serial.println("INA226 초기화 성공");
-    int err = ina226.setMaxCurrentShunt(3.0, 0.005); // 최대전류 3.0A, 션트저항 0.005옴
+    int err = ina226.setMaxCurrentShunt(hwConfig.current.maxCurrent, hwConfig.current.shuntResistor); // 최대전류 3.0A, 션트저항 0.005옴
     if (err == INA226_ERR_NONE) {
       Serial.println("INA226 캘리브레이션 성공");
     } else {
